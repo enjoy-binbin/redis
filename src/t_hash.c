@@ -651,6 +651,70 @@ void hsetnxCommand(client *c) {
     }
 }
 
+#define HSET_NONE 0
+#define HSET_NX (1 << 0)
+#define HSET_XX (1 << 1)
+#define HSET_CH (1 << 2)
+void hsetexCommand(client *c) {
+    robj *key = c->argv[1];
+    robj *o;
+
+    int flags = 0;
+    int fields_idx = 0;
+    int elements = 0;
+    /* CH is an abbreviation of changed.
+     * Return number of elements added (ch=0) or updated (ch=1). */
+
+    /* Parse options. At the end 'scoreidx' is set to the argument position
+     * of the score of the first score-element pair. */
+    fields_idx = 2;
+    while(fields_idx < c->argc) {
+        char *opt = c->argv[fields_idx]->ptr;
+
+        if (!strcasecmp(opt, "FIELDS")) {
+            break;
+        } else if (!strcasecmp(opt, "nx")) {
+            flags |= HSET_NX;
+        } else if (!strcasecmp(opt, "xx")) {
+            flags |= HSET_XX;
+        } else if (!strcasecmp(opt, "ch")) {
+            flags |= HSET_CH;
+        } else {
+            break;
+        }
+
+        fields_idx++;
+    }
+
+    /* Turn options into simple to check vars. */
+    int nx = (flags & HSET_NX) != 0;
+    int xx = (flags & HSET_XX) != 0;
+    int ch = (flags & HSET_CH) != 0;
+
+    /* After the options, we expect to have an even number of args, since
+    * we expect any number of score-element pairs. */
+    elements = c->argc - fields_idx;
+    if (elements % 2 || !elements) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+    elements /= 2; /* Now this holds the number of score-element pairs. */
+
+    /* Check for incompatible options. */
+    if (nx && xx) {
+        addReplyError(c, "XX and NX options at the same time are not compatible");
+        return;
+    }
+
+    serverLog(LL_WARNING, "flags: %d\n", flags);
+    serverLog(LL_WARNING, "ch: %d\n", ch);
+    serverLog(LL_WARNING, "nx: %d\n", nx);
+    serverLog(LL_WARNING, "xx: %d\n", xx);
+
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+    addReply(c, shared.ok);
+}
+
 void hsetCommand(client *c) {
     int i, created = 0;
     robj *o;
