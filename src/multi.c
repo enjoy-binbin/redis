@@ -59,6 +59,10 @@ void freeClientMultiState(client *c) {
 void queueMultiCommand(client *c) {
     multiCmd *mc;
 
+    // 在入队前检查客户端的标志, 因为如果一个事务已经失败了, 就没有必要入队
+    // 这样可以节省服务器资源, 例如内存/CPU等
+    // 这个优化点是 oran 提交的, 不过最早他只检查了 `CLIENT_DIRTY_EXEC`
+    // `CLIENT_DIRTY_CAS` 的检查是我添加的, 因为我们同样可以检查出 dirty_cas(嘻嘻)
     /* No sense to waste memory if the transaction is already aborted.
      * this is useful in case client sends these in a pipeline, or doesn't
      * bother to read previous responses and didn't notice the multi was already
@@ -66,9 +70,12 @@ void queueMultiCommand(client *c) {
     if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC))
         return;
 
+    // 为新数组元素分配内存空间
     c->mstate.commands = zrealloc(c->mstate.commands,
             sizeof(multiCmd)*(c->mstate.count+1));
+    // 直接移动指针指向新元素
     mc = c->mstate.commands+c->mstate.count;
+    // 事务命令入队列
     mc->cmd = c->cmd;
     mc->argc = c->argc;
     mc->argv = c->argv;
@@ -107,7 +114,6 @@ void multiCommand(client *c) {
         return;
     }
     c->flags |= CLIENT_MULTI;
-
     addReply(c,shared.ok);
 }
 
@@ -168,6 +174,7 @@ void execCommand(client *c) {
     struct redisCommand *orig_cmd;
     int was_master = server.masterhost == NULL;
 
+    // 执行exec的检查, 需要先进入multi
     if (!(c->flags & CLIENT_MULTI)) {
         addReplyError(c,"EXEC without MULTI");
         return;
@@ -177,7 +184,9 @@ void execCommand(client *c) {
     if (isWatchedKeyExpired(c)) {
         c->flags |= (CLIENT_DIRTY_CAS);
     }
-
+    // 检查这次 exec 是否会失败, 只是简单的检查客户端的flag
+    // 因为这些 flag 在之前 process_command 的时候已经维护好了
+    // 缺点是, 如果一个 multi 中同时包含下面两个错误, 提示信息不太友好
     /* Check if we need to abort the EXEC because:
      * 1) Some WATCHed key was touched.
      * 2) There was a previous error while queueing commands.
@@ -203,13 +212,16 @@ void execCommand(client *c) {
     /* Exec all the queued commands */
     unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */
 
+    // 标志着服务器正在执行 exec 命令, 在一些地方会判断这个标志进行返回
     server.in_exec = 1;
 
+    // 原来的参数命令都先记录一下, 有可能会在执行过程中被修改
     orig_argv = c->argv;
     orig_argv_len = c->argv_len;
     orig_argc = c->argc;
     orig_cmd = c->cmd;
     addReplyArrayLen(c,c->mstate.count);
+    // 这里就是遍历执行全部的命令了
     for (j = 0; j < c->mstate.count; j++) {
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
@@ -311,10 +323,15 @@ void watchForKey(client *c, robj *key) {
     /* Check if we are already watching for this key */
     listRewind(c->watched_keys,&li);
     while((ln = listNext(&li))) {
+        // 这里是 O(N) 的检查当前客户端是否有 watch 过这个 key
         wk = listNodeValue(ln);
         if (wk->db == c->db && equalStringObjects(key,wk->key))
             return; /* Key already watched */
     }
+
+    // 上面没检查出, 说明这个 key 没有 watch 过, 之后会做两件事:
+    // 1: 将这个 key 加入 db->watched_keys, 这里加入 db 是用来判断键后续是否有被修改
+    // 2: 将这个 key 加入到 c->watched_keys, 表示客户端 watched 了这个 key
     /* This key is not already watched in this DB. Let's add it */
     clients = dictFetchValue(c->db->watched_keys,key);
     if (!clients) {
@@ -382,16 +399,19 @@ void touchWatchedKey(redisDb *db, robj *key) {
     listIter li;
     listNode *ln;
 
+    // 如果字典为空直接返回
     if (dictSize(db->watched_keys) == 0) return;
+
+    // 如果字典里没找到对应的键, 也返回
     clients = dictFetchValue(db->watched_keys, key);
     if (!clients) return;
 
+    // 遍历所有客户端, 给客户端加上`CLIENT_DIRTY_CAS`
     /* Mark all the clients watching this key as CLIENT_DIRTY_CAS */
     /* Check if we are already watching for this key */
     listRewind(clients,&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
-
         c->flags |= CLIENT_DIRTY_CAS;
     }
 }

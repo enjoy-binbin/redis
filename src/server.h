@@ -788,16 +788,21 @@ typedef struct redisDb {
 typedef struct dbBackup dbBackup;
 
 /* Client MULTI/EXEC state */
+// 单个事务命令
 typedef struct multiCmd {
-    robj **argv;
+    robj **argv; // 命令的参数, 也就是 c->argv
     int argv_len;
-    int argc;
-    struct redisCommand *cmd;
+    int argc; // 命令的格式, 也就是 c->argc
+    struct redisCommand *cmd; // 命令对应的数据结构
 } multiCmd;
 
+// 每个 client 都会有这样一个 multiState
 typedef struct multiState {
+    // 一组命令数组
     multiCmd *commands;     /* Array of MULTI commands */
+    // 命令的数量
     int count;              /* Total number of MULTI commands */
+    // 命令的一些标志, 例如可读可写啥的
     int cmd_flags;          /* The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it
                                will be set in this field. */
