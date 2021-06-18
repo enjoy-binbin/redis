@@ -800,6 +800,7 @@ void configSetCommand(client *c) {
         int vlen, j;
         sds *v = sdssplitlen(o->ptr,sdslen(o->ptr)," ",1,&vlen);
 
+        serverLog(LL_WARNING, "enter save \n");
         /* Perform sanity check before setting the new config:
          * - Even number of args
          * - Seconds >= 1, changes >= 0 */
@@ -819,8 +820,16 @@ void configSetCommand(client *c) {
                 goto badfmt;
             }
         }
+
+        int old_saveparamslen = server.saveparamslen;
+        serverLog(LL_WARNING, "old server.saveparamslen: %d", server.saveparamslen);
+
         /* Finally set the new config */
         resetServerSaveParams();
+
+
+        serverLog(LL_WARNING, "vlen: %d", vlen);
+
         for (j = 0; j < vlen; j += 2) {
             time_t seconds;
             int changes;
@@ -828,7 +837,20 @@ void configSetCommand(client *c) {
             seconds = strtoll(v[j],NULL,10);
             changes = strtoll(v[j+1],NULL,10);
             appendServerSaveParams(seconds, changes);
+
+            serverLog(LL_WARNING, "seconds: %d, changes: %d", seconds, changes);
+
         }
+        int new_saveparamslen = server.saveparamslen;
+
+        if (old_saveparamslen == 0 && new_saveparamslen > 0) {
+            /* Indicates that the `save` configuration has been opened.
+             * Trigger a bgsave implicitly. */
+        }
+
+
+        serverLog(LL_WARNING, "new server.saveparamslen: %d", server.saveparamslen);
+
         sdsfreesplitres(v,vlen);
     } config_set_special_field("dir") {
         if (chdir((char*)o->ptr) == -1) {
