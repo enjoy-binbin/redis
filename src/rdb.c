@@ -2945,3 +2945,52 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
     }
     return NULL;
 }
+
+/* Called when the user switches from `save ""` to `save "<seconds> <changes>"`
+ * at runtime using the CONFIG command. */
+int startSave(void) {
+    rdbSaveInfo rsi, *rsiptr;
+    rsiptr = rdbPopulateSaveInfo(&rsi);
+
+    if (hasActiveChildProcess() && server.child_type != CHILD_TYPE_RDB) {
+        server.rdb_bgsave_scheduled = 1;
+        serverLog(LL_WARNING,"RDB save was enabled but there is already another background operation. "
+                             "A RDB background save was scheduled to start when possible.");
+    } else {
+        /* If there is a pending AOF rewrite, we need to switch it off and
+         * start a new one: the old one cannot be reused because it is not
+         * accumulating the AOF buffer. */
+        if (server.child_type == CHILD_TYPE_RDB) {
+            serverLog(LL_WARNING,"AOF was enabled but there is already an AOF rewriting in background. Stopping background AOF and starting a rewrite now.");
+            killAppendOnlyChild();
+        }
+
+        if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_ERR) {
+            serverLog(LL_WARNING,"Redis needs to enable the RDB but can't trigger a background RDB save operation. "
+                                 "Check the above logs for more info about the error.");
+            return C_ERR;
+        }
+    }
+
+    /* We correctly switched on RDB, now wait for the save to be complete
+     * in order to append data on disk. */
+    server.aof_state = AOF_WAIT_REWRITE;
+    server.aof_last_fsync = server.unixtime;
+    server.aof_fd = newfd;
+
+    /* If AOF fsync error in bio job, we just ignore it and log the event. */
+    int aof_bio_fsync_status;
+    atomicGet(server.aof_bio_fsync_status, aof_bio_fsync_status);
+    if (aof_bio_fsync_status == C_ERR) {
+        serverLog(LL_WARNING,
+                  "AOF reopen, just ignore the AOF fsync error in bio job");
+        atomicSet(server.aof_bio_fsync_status,C_OK);
+    }
+
+    /* If AOF was in error state, we just ignore it and log the event. */
+    if (server.aof_last_write_status == C_ERR) {
+        serverLog(LL_WARNING,"AOF reopen, just ignore the last error.");
+        server.aof_last_write_status = C_OK;
+    }
+    return C_OK;
+}

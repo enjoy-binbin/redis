@@ -846,6 +846,7 @@ void configSetCommand(client *c) {
         if (old_saveparamslen == 0 && new_saveparamslen > 0) {
             /* Indicates that the `save` configuration has been opened.
              * Trigger a bgsave implicitly. */
+
         }
 
 
