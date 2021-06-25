@@ -4712,11 +4712,14 @@ int processCommand(client *c) {
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
     if (server.maxmemory && !server.lua_timedout) {
+        // out_of_memory == EVICT_FAIL, 代表达到内存限制但是没有键可以驱逐, oom
         int out_of_memory = (performEvictions() == EVICT_FAIL);
         /* performEvictions may flush slave output buffers. This may result
          * in a slave, that may be the active client, to be freed. */
         if (server.current_client == NULL) return C_ERR;
 
+        // 命令是不是需要拒绝执行, 注释说的很清楚了, 事务相关的不难理解
+        // 不过代码感觉可以小优化下, !reject_cmd_on_oom 下才跑会合理点
         int reject_cmd_on_oom = is_denyoom_command;
         /* If client is in MULTI/EXEC context, queuing may consume an unlimited
          * amount of memory, so we want to stop that.
