@@ -287,6 +287,7 @@ void execCommand(client *c) {
          * rest was not. We need to make sure to at least terminate the
          * backlog with the final EXEC. */
         if (server.repl_backlog && was_master && !is_master) {
+            // 将 exec 命令加进复制积压缓冲区
             char *execcmd = "*1\r\n$4\r\nEXEC\r\n";
             feedReplicationBacklog(execcmd,strlen(execcmd));
         }
