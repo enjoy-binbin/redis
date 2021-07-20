@@ -1086,7 +1086,9 @@ void activeDefragCycle(void) {
     int quit = 0;
 
     if (!server.active_defrag_enabled) {
+        // 进来的时候检查下配置总开关, 如果关闭了就 return
         if (server.active_defrag_running) {
+            // 如果碎片整理正在进行中, 就中断它, 重置一些静态变量
             /* if active defrag was disabled mid-run, start from fresh next time. */
             server.active_defrag_running = 0;
             if (db)
@@ -1101,11 +1103,14 @@ void activeDefragCycle(void) {
         return;
     }
 
+    // 如果有子进程在进行(rdb/aof rewrite等等), 也不执行碎片整理
     if (hasActiveChildProcess())
         return; /* Defragging memory while there's a fork will just do damage. */
 
     /* Once a second, check if the fragmentation justfies starting a scan
      * or making it more aggressive. */
+    // 每秒执行一次, 检查是否需要进行增量碎片整理, 里面会修改 active_defrag_running
+    // 其表示 CPU 预期利用率, 根据一些变量算出来的
     run_with_period(1000) {
         computeDefragCycles();
     }
