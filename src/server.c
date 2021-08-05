@@ -6772,8 +6772,10 @@ void memtest(size_t megabytes, int passes);
 /* Returns 1 if there is --sentinel among the arguments or if
  * executable name contains "redis-sentinel". */
 int checkForSentinelMode(int argc, char **argv, char *exec_name) {
+    // 如果 exec_name 就是 redis-sentinel 当然进入哨兵模式
     if (strstr(exec_name,"redis-sentinel") != NULL) return 1;
 
+    // 如果执行参数里有 --sentinel 也就是进入哨兵模式
     for (int j = 1; j < argc; j++)
         if (!strcmp(argv[j],"--sentinel")) return 1;
     return 0;
@@ -7100,6 +7102,7 @@ int main(int argc, char **argv) {
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
 
+    // 这边将 exec_name 解析出来，会类似 redis-sentinel 这样
     char *exec_name = strrchr(argv[0], '/');
     if (exec_name == NULL) exec_name = argv[0];
     server.sentinel_mode = checkForSentinelMode(argc,argv, exec_name);
