@@ -135,6 +135,7 @@ client *createClient(connection *conn) {
     uint64_t client_id;
     atomicGetIncr(server.next_client_id, client_id, 1);
     c->id = client_id;
+    // todo wanted a default resp version
     c->resp = 2;
     c->conn = conn;
     c->name = NULL;

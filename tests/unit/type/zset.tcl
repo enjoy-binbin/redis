@@ -370,65 +370,97 @@ start_server {tags {"zset"}} {
             r zrem ztmp a b c d e f g
         } {3}
 
-        test "ZRANGE basics - $encoding" {
-            r del ztmp
-            r zadd ztmp 1 a
-            r zadd ztmp 2 b
-            r zadd ztmp 3 c
-            r zadd ztmp 4 d
+    foreach {cmd} {ZRANGE ZREMRANGE_GET} {
+        test "$cmd basics - $encoding" {
+            proc verify_zrange_response {rd cmd key min max expected_response removed {options ""}} {
+                if {$cmd == "ZRANGE"} {
+                    set res [$rd zrange $key $min $max {*}$options]
+                } else {
+                    set old_card [r zcard $key]
+                    set res [$rd zremrange $key $min $max GET {*}$options]
 
-            assert_equal {a b c d} [r zrange ztmp 0 -1]
-            assert_equal {a b c} [r zrange ztmp 0 -2]
-            assert_equal {b c d} [r zrange ztmp 1 -1]
-            assert_equal {b c} [r zrange ztmp 1 -2]
-            assert_equal {c d} [r zrange ztmp -2 -1]
-            assert_equal {c} [r zrange ztmp -2 -2]
+                    # Ensure the same quantity before and after.
+                    set new_card [r zcard $key]
+                    assert {$old_card == $new_card + $removed}
 
-            # out of range start index
-            assert_equal {a b c} [r zrange ztmp -5 2]
-            assert_equal {a b} [r zrange ztmp -5 1]
-            assert_equal {} [r zrange ztmp 5 -1]
-            assert_equal {} [r zrange ztmp 5 -2]
+                    $rd zadd ztmp 1 a 2 b 3 c 4 d
+                }
 
-            # out of range end index
-            assert_equal {a b c d} [r zrange ztmp 0 5]
-            assert_equal {b c d} [r zrange ztmp 1 5]
-            assert_equal {} [r zrange ztmp 0 -5]
-            assert_equal {} [r zrange ztmp 1 -5]
+                # ZREMRANGE with GET option response is consistent with ZRANGE.
+                assert_equal $res $expected_response
+            }
 
-            # withscores
-            assert_equal {a 1 b 2 c 3 d 4} [r zrange ztmp 0 -1 withscores]
-        }
+            create_zset ztmp {1 a 2 b 3 c 4 d}
 
-        test "ZREVRANGE basics - $encoding" {
-            r del ztmp
-            r zadd ztmp 1 a
-            r zadd ztmp 2 b
-            r zadd ztmp 3 c
-            r zadd ztmp 4 d
-
-            assert_equal {d c b a} [r zrevrange ztmp 0 -1]
-            assert_equal {d c b} [r zrevrange ztmp 0 -2]
-            assert_equal {c b a} [r zrevrange ztmp 1 -1]
-            assert_equal {c b} [r zrevrange ztmp 1 -2]
-            assert_equal {b a} [r zrevrange ztmp -2 -1]
-            assert_equal {b} [r zrevrange ztmp -2 -2]
+            verify_zrange_response r $cmd ztmp 0 -1 {a b c d} 4
+            verify_zrange_response r $cmd ztmp 0 -2 {a b c} 3
+            verify_zrange_response r $cmd ztmp 1 -1 {b c d} 3
+            verify_zrange_response r $cmd ztmp 1 -2 {b c} 2
+            verify_zrange_response r $cmd ztmp -2 -1 {c d} 2
+            verify_zrange_response r $cmd ztmp -2 -2 {c} 1
 
             # out of range start index
-            assert_equal {d c b} [r zrevrange ztmp -5 2]
-            assert_equal {d c} [r zrevrange ztmp -5 1]
-            assert_equal {} [r zrevrange ztmp 5 -1]
-            assert_equal {} [r zrevrange ztmp 5 -2]
+            verify_zrange_response r $cmd ztmp -5 2 {a b c} 3
+            verify_zrange_response r $cmd ztmp -5 1 {a b} 2
+            verify_zrange_response r $cmd ztmp 5 -1 {} 0
+            verify_zrange_response r $cmd ztmp 5 -2 {} 0
 
             # out of range end index
-            assert_equal {d c b a} [r zrevrange ztmp 0 5]
-            assert_equal {c b a} [r zrevrange ztmp 1 5]
-            assert_equal {} [r zrevrange ztmp 0 -5]
-            assert_equal {} [r zrevrange ztmp 1 -5]
+            verify_zrange_response r $cmd ztmp 0 5 {a b c d} 4
+            verify_zrange_response r $cmd ztmp 1 5 {b c d} 3
+            verify_zrange_response r $cmd ztmp 0 -5 {} 0
+            verify_zrange_response r $cmd ztmp 1 -5 {} 0
 
             # withscores
-            assert_equal {d 4 c 3 b 2 a 1} [r zrevrange ztmp 0 -1 withscores]
+            verify_zrange_response r $cmd ztmp 0 -1 {a 1 b 2 c 3 d 4} 4 withscores
         }
+    }
+
+    foreach {cmd} {ZREVRANGE ZREMRANGE_REV_GET} {
+        test "$cmd basics - $encoding" {
+            proc verify_zrange_response {rd cmd key min max expected_response removed {options ""} } {
+                if {$cmd == "ZREVRANGE"} {
+                    set res [$rd zrevrange $key $min $max {*}$options]
+                } else {
+                    set old_card [r zcard $key]
+                    set res [$rd zremrange $key $min $max REV GET {*}$options]
+
+                    # Ensure the same quantity before and after.
+                    set new_card [r zcard $key]
+                    assert {$old_card == $new_card + $removed}
+
+                    $rd zadd ztmp 1 a 2 b 3 c 4 d
+                }
+                # ZREMRANGE with GET/REV options response is consistent with ZREVRANGE.
+                assert_equal $res $expected_response
+            }
+
+            # zadd ztmp 1 a 2 b 3 c 4 d
+            create_zset ztmp {1 a 2 b 3 c 4 d}
+
+            verify_zrange_response r $cmd ztmp 0 -1 {d c b a} 4
+            verify_zrange_response r $cmd ztmp 0 -2 {d c b} 3
+            verify_zrange_response r $cmd ztmp 1 -1 {c b a} 3
+            verify_zrange_response r $cmd ztmp 1 -2 {c b} 2
+            verify_zrange_response r $cmd ztmp -2 -1 {b a} 2
+            verify_zrange_response r $cmd ztmp -2 -2 {b} 1
+
+            # out of range start index
+            verify_zrange_response r $cmd ztmp -5 2 {d c b} 3
+            verify_zrange_response r $cmd ztmp -5 1 {d c} 2
+            verify_zrange_response r $cmd ztmp 5 -1 {} 0
+            verify_zrange_response r $cmd ztmp 5 -2 {} 0
+
+            # out of range end index
+            verify_zrange_response r $cmd ztmp 0 5 {d c b a} 4
+            verify_zrange_response r $cmd ztmp 1 5 {c b a} 3
+            verify_zrange_response r $cmd ztmp 0 -5 {} 0
+            verify_zrange_response r $cmd ztmp 1 -5 {} 0
+
+            # withscores
+            verify_zrange_response r $cmd ztmp 0 -1 {d 4 c 3 b 2 a 1} 4 withscores
+        }
+    }
 
         test "ZRANK/ZREVRANK basics - $encoding" {
             r del zranktmp
@@ -482,88 +514,211 @@ start_server {tags {"zset"}} {
             create_zset zset {-inf a 1 b 2 c 3 d 4 e 5 f +inf g}
         }
 
-        test "ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZCOUNT basics - $encoding" {
+        # todo rename
+        proc verify_zrange_response2 {rd cmd key min max expected_response removed {extra_cmd ""} {options ""}} {
+            if {$cmd == "ZRANGEBYSCORE"} {
+                set res [$rd zrangebyscore $key $min $max {*}$options]
+            } elseif {$cmd == "ZREMRANGE_BYSCORE"} {
+                if {$extra_cmd != ""} {
+                    $rd {*}$extra_cmd
+                }
+                set old_card [r zcard $key]
+                set res [$rd zremrange $key $min $max BYSCORE GET {*}$options]
+
+                set res2 [r zrange $key 0 -1 withscores]
+
+                # Ensure the same quantity before and after.
+                set new_card [r zcard $key]
+                assert {$old_card == $new_card + $removed}
+
+                r zadd $key -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+
+            } elseif {$cmd == "ZREVRANGEBYSCORE"} {
+                set res [$rd zrevrangebyscore $key $min $max {*}$options]
+            } elseif {$cmd == "ZREMRANGE_BYSCORE_REV"} {
+                if {$extra_cmd != ""} {
+                    $rd {*}$extra_cmd
+                }
+                set old_card [r zcard $key]
+                set res [$rd zremrange $key $min $max BYSCORE GET REV {*}$options]
+
+                # Ensure the same quantity before and after.
+                set new_card [r zcard $key]
+                assert {$old_card == $new_card + $removed}
+
+                r zadd $key -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            }
+
+            # ZREMRANGE with GET option response is consistent with ZRANGE.
+            assert_equal $res $expected_response
+        }
+
+    foreach {range range_rev} {ZRANGEBYSCORE ZREVRANGEBYSCORE ZREMRANGE_BYSCORE ZREMRANGE_BYSCORE_REV} {
+        # ZREMRANGE_BYSCORE/ZREMRANGE_BYSCORE_REV/ZCOUNT basics - skiplist
+        test "$range/$range_rev/ZCOUNT basics - $encoding" {
             create_default_zset
 
+            puts "111111111111111111111111"
             # inclusive range
-            assert_equal {a b c} [r zrangebyscore zset -inf 2]
-            assert_equal {b c d} [r zrangebyscore zset 0 3]
-            assert_equal {d e f} [r zrangebyscore zset 3 6]
-            assert_equal {e f g} [r zrangebyscore zset 4 +inf]
-            assert_equal {c b a} [r zrevrangebyscore zset 2 -inf]
-            assert_equal {d c b} [r zrevrangebyscore zset 3 0]
-            assert_equal {f e d} [r zrevrangebyscore zset 6 3]
-            assert_equal {g f e} [r zrevrangebyscore zset +inf 4]
+            verify_zrange_response2 r $range zset -inf 2 {a b c} 3
+            puts "aaaaaaaaaaa"
+            verify_zrange_response2 r $range zset 0 3 {b c d} 3
+            # zremrange zset 0 3 byscore GET
+            puts "vvvvvvvvvvvvv"
+            verify_zrange_response2 r $range zset 3 6 {d e f} 3
+            # zremrange zset 3 6 byscore GET
+            puts "cccccccccccc"
+            verify_zrange_response2 r $range zset 4 +inf {e f g} 3
+            puts "dddddddddddd"
+
+
+            verify_zrange_response2 r $range_rev zset 2 -inf {c b a} 3
+            puts "eeeeeeeeeee"
+            verify_zrange_response2 r $range_rev zset 3 0 {d c b} 3
+            puts "ffffffffffff"
+            verify_zrange_response2 r $range_rev zset 6 3 {f e d} 3
+            puts "gggggggggggg"
+            verify_zrange_response2 r $range_rev zset +inf 4 {g f e} 3
+            puts "hhhhhhhhhhhhhhhhh"
             assert_equal 3 [r zcount zset 0 3]
 
             # exclusive range
-            assert_equal {b}   [r zrangebyscore zset (-inf (2]
-            assert_equal {b c} [r zrangebyscore zset (0 (3]
-            assert_equal {e f} [r zrangebyscore zset (3 (6]
-            assert_equal {f}   [r zrangebyscore zset (4 (+inf]
-            assert_equal {b}   [r zrevrangebyscore zset (2 (-inf]
-            assert_equal {c b} [r zrevrangebyscore zset (3 (0]
-            assert_equal {f e} [r zrevrangebyscore zset (6 (3]
-            assert_equal {f}   [r zrevrangebyscore zset (+inf (4]
+            puts "222222222222222222222"
+
+            verify_zrange_response2 r $range zset (-inf (2 {b} 1
+            # zremrange zset (-inf (2 GET
+
+            puts "33333333333333"
+            verify_zrange_response2 r $range zset (0 (3 {b c} 2
+            puts "44444444444444"
+            verify_zrange_response2 r $range zset (3 (6 {e f} 2
+            puts "5555555555555555"
+            verify_zrange_response2 r $range zset (4 (+inf {f} 1
+            puts "6666666666666666"
+            verify_zrange_response2 r $range_rev zset (2 (-inf {b} 1
+            puts "77777777777777"
+            verify_zrange_response2 r $range_rev zset (3 (0 {c b} 2
+            puts "8888888888888888"
+            verify_zrange_response2 r $range_rev zset (6 (3 {f e} 2
+            puts "9999999999999999"
+            verify_zrange_response2 r $range_rev zset (+inf (4 {f} 1
             assert_equal 2 [r zcount zset (0 (3]
 
+            puts "33333333333333"
             # test empty ranges
-            r zrem zset a
-            r zrem zset g
+            r zrem zset a g
 
             # inclusive
-            assert_equal {} [r zrangebyscore zset 4 2]
-            assert_equal {} [r zrangebyscore zset 6 +inf]
-            assert_equal {} [r zrangebyscore zset -inf -6]
-            assert_equal {} [r zrevrangebyscore zset +inf 6]
-            assert_equal {} [r zrevrangebyscore zset -6 -inf]
+            verify_zrange_response2 r $range zset 4 2 {} 0 "zrem zset a g"
+            puts "ggggggggggggggggggg"
+            verify_zrange_response2 r $range zset 6 +inf {} 0 "zrem zset a g"
 
+            puts "fffffffffffffff"
+
+            verify_zrange_response2 r $range zset -inf -6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range_rev zset +inf 6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range_rev zset -6 -inf {} 0 "zrem zset a g"
+
+            puts "4444444444444444"
             # exclusive
-            assert_equal {} [r zrangebyscore zset (4 (2]
-            assert_equal {} [r zrangebyscore zset 2 (2]
-            assert_equal {} [r zrangebyscore zset (2 2]
-            assert_equal {} [r zrangebyscore zset (6 (+inf]
-            assert_equal {} [r zrangebyscore zset (-inf (-6]
-            assert_equal {} [r zrevrangebyscore zset (+inf (6]
-            assert_equal {} [r zrevrangebyscore zset (-6 (-inf]
+            verify_zrange_response2 r $range zset (4 (2 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset 2 (2 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset (2 2 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset (6 (+inf {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset (-inf (-6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range_rev zset (+inf (6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range_rev zset (-6 (-inf {} 0 "zrem zset a g"
 
+            puts "55555555555555555"
             # empty inner range
-            assert_equal {} [r zrangebyscore zset 2.4 2.6]
-            assert_equal {} [r zrangebyscore zset (2.4 2.6]
-            assert_equal {} [r zrangebyscore zset 2.4 (2.6]
-            assert_equal {} [r zrangebyscore zset (2.4 (2.6]
+            verify_zrange_response2 r $range zset 2.4 2.6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset (2.4 2.6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset 2.4 (2.6 {} 0 "zrem zset a g"
+            verify_zrange_response2 r $range zset (2.4 (2.6 {} 0 "zrem zset a g"
         }
 
-        test "ZRANGEBYSCORE with WITHSCORES - $encoding" {
+        test "$range/$range_rev with WITHSCORES - $encoding" {
             create_default_zset
-            assert_equal {b 1 c 2 d 3} [r zrangebyscore zset 0 3 withscores]
-            assert_equal {d 3 c 2 b 1} [r zrevrangebyscore zset 3 0 withscores]
+
+            verify_zrange_response2 r $range zset 0 3 {b 1 c 2 d 3} 3 "" WITHSCORES
+            verify_zrange_response2 r $range_rev zset 3 0 {d 3 c 2 b 1} 3 "" WITHSCORES
         }
 
-        test "ZRANGEBYSCORE with LIMIT - $encoding" {
+        # ZREMRANGE_BYSCORE/ZREMRANGE_BYSCORE_REV with LIMIT - skiplist
+        test "$range/$range_rev with LIMIT - $encoding" {
             create_default_zset
-            assert_equal {b c}   [r zrangebyscore zset 0 10 LIMIT 0 2]
-            assert_equal {d e f} [r zrangebyscore zset 0 10 LIMIT 2 3]
-            assert_equal {d e f} [r zrangebyscore zset 0 10 LIMIT 2 10]
-            assert_equal {}      [r zrangebyscore zset 0 10 LIMIT 20 10]
-            assert_equal {f e}   [r zrevrangebyscore zset 10 0 LIMIT 0 2]
-            assert_equal {d c b} [r zrevrangebyscore zset 10 0 LIMIT 2 3]
-            assert_equal {d c b} [r zrevrangebyscore zset 10 0 LIMIT 2 10]
-            assert_equal {}      [r zrevrangebyscore zset 10 0 LIMIT 20 10]
+
+            verify_zrange_response2 r $range zset 0 10 {b c} 2 "" "LIMIT 0 2"
+            puts "1111111111111111111111"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 0 10 byscore limit 0 2 GET
+
+            verify_zrange_response2 r $range zset 0 10 {d e f} 3 "" "LIMIT 2 3"
+            puts "222222222222222"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 0 10 byscore limit 2 3 GET
+
+            verify_zrange_response2 r $range zset 0 10 {d e f} 3 "" "LIMIT 2 10"
+            puts "33333333333333"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 0 10 byscore GET LIMIT 2 10
+
+            verify_zrange_response2 r $range zset 0 10 {} 0 "" "LIMIT 20 10"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 0 10 byscore GET LIMIT 20 10
+            puts "44444444444444444"
+
+            verify_zrange_response2 r $range_rev zset 10 0 {f e} 2 "" "LIMIT 0 2"
+            puts "5555555555555"
+            # zremrange zset 10 0 GET REV LIMIT 10 0 BYSCORE LIMIT 0 2
+
+            verify_zrange_response2 r $range_rev zset 10 0 {d c b} 3 "" "LIMIT 2 3"
+            puts "6666666666666666"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 10 0 GET REV BYSCORE LIMIT 2 3
+
+            verify_zrange_response2 r $range_rev zset 10 0 {d c b} 3 "" "LIMIT 2 10"
+            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+            # zremrange zset 10 0 GET REV LIMIT 2 10 byscore
+            puts "777777777777777777777"
+
+            verify_zrange_response2 r $range_rev zset 0 10 {} 0 "" "LIMIT 20 10"
+            puts "8888888888888888"
         }
 
-        test "ZRANGEBYSCORE with LIMIT and WITHSCORES - $encoding" {
+        test "$range/$range_rev with LIMIT and WITHSCORES - $encoding" {
             create_default_zset
+
             assert_equal {e 4 f 5} [r zrangebyscore zset 2 5 LIMIT 2 3 WITHSCORES]
+            verify_zrange_response2 r $range zset 2 5 {e 4 f 5} 2 "" "LIMIT 2 3 WITHSCORES"
+
             assert_equal {d 3 c 2} [r zrevrangebyscore zset 5 2 LIMIT 2 3 WITHSCORES]
+            verify_zrange_response2 r $range_rev zset 5 2 {d 3 c 2} 2 "" "LIMIT 2 3 WITHSCORES"
+
             assert_equal {} [r zrangebyscore zset 2 5 LIMIT 12 13 WITHSCORES]
+            verify_zrange_response2 r $range zset 2 5 {} 0 "" "LIMIT 12 13 WITHSCORES"
         }
 
-        test "ZRANGEBYSCORE with non-value min or max - $encoding" {
-            assert_error "*not*float*" {r zrangebyscore fooz str 1}
-            assert_error "*not*float*" {r zrangebyscore fooz 1 str}
-            assert_error "*not*float*" {r zrangebyscore fooz 1 NaN}
+        test "$range/$range_rev with non-value min or max - $encoding" {
+            if {$cmd == "ZRANGEBYSCORE"} {
+                assert_error "*not*float*" {r zrangebyscore fooz str 1}
+                assert_error "*not*float*" {r zrangebyscore fooz 1 str}
+                assert_error "*not*float*" {r zrangebyscore fooz 1 NaN}
+
+                assert_error "*not*float*" {r zrevrangebyscore fooz str 1}
+                assert_error "*not*float*" {r zrevrangebyscore fooz 1 str}
+                assert_error "*not*float*" {r zrevrangebyscore fooz 1 NaN}
+            } elseif {$cmd == "ZREMRANGE_BYSCORE"} {
+                assert_error "*not*float*" {r zremrange fooz str 1 BYSCORE}
+                assert_error "*not*float*" {r zremrange fooz 1 str BYSCORE GET}
+                assert_error "*not*float*" {r zremrange fooz 1 NaN BYSCORE}
+
+                assert_error "*not*float*" {r zremrange fooz str 1 BYSCORE REV}
+                assert_error "*not*float*" {r zremrange fooz 1 str BYSCORE}
+                assert_error "*not*float*" {r zremrange fooz 1 NaN BYSCORE GET}
+            }
         }
+    }
 
         proc create_default_lex_zset {} {
             create_zset zset {0 alpha 0 bar 0 cool 0 down
@@ -571,16 +726,46 @@ start_server {tags {"zset"}} {
                               0 omega}
         }
 
-        test "ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics - $encoding" {
+    foreach {range range_rev} {ZRANGEBYLEX ZREVRANGEBYLEX ZREMRANGE_BYLEX ZREMRANGE_BYLEX_REV} {
+        test "$range/$range_rev/ZLEXCOUNT basics - $encoding" {
             create_default_lex_zset
 
             # inclusive range
             assert_equal {alpha bar cool} [r zrangebylex zset - \[cool]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "1111111111111"
+
             assert_equal {bar cool down} [r zrangebylex zset \[bar \[down]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "222222222222222"
+
+
             assert_equal {great hill omega} [r zrangebylex zset \[g +]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "3333333333333"
+
+
             assert_equal {cool bar alpha} [r zrevrangebylex zset \[cool -]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "444444444444444"
+
+
             assert_equal {down cool bar} [r zrevrangebylex zset \[down \[bar]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "55555555555555"
+
+
             assert_equal {omega hill great foo elephant down} [r zrevrangebylex zset + \[d]
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+            puts "66666666666666"
+
+
             assert_equal 3 [r zlexcount zset \[ele \[h]
 
             # exclusive range
@@ -599,6 +784,7 @@ start_server {tags {"zset"}} {
             assert_equal {} [r zrevrangebylex zset \[elez \[elex]
             assert_equal {} [r zrevrangebylex zset (hill (omega]
         }
+    }
 
         test "ZLEXCOUNT advanced - $encoding" {
             create_default_lex_zset
@@ -637,98 +823,173 @@ start_server {tags {"zset"}} {
             assert_error "*not*string*" {r zrangebylex fooz -x \[bar}
         }
 
-        test "ZREMRANGEBYSCORE basics - $encoding" {
-            proc remrangebyscore {min max} {
+        test "ZREMRANGE with illegal argument - $encoding" {
+            create_zset zset {1 a 2 b 3 c 4 d 5 e}
+
+            assert_error "ERR syntax*" {r zremrange zset 1 3 by_wrong limit 0 -1}
+            assert_error "ERR syntax*" {r zremrange zset 1 3 byscore limit}
+            assert_error "ERR syntax*" {r zremrange zset 1 3 byrank bad_arg}
+
+            # LIMIT is only supported in combination with either BYSCORE or BYLEX
+            assert_error "ERR syntax*LIMIT*" {r zremrange zset 1 3 limit 0 -1}
+            assert_error "ERR syntax*LIMIT*" {r zremrange zset 1 3 byrank limit 0 -1}
+
+            assert_error "ERR offset*" {r zremrange zset 1 3 byscore limit -1 -1}
+            assert_error "ERR offset*" {r zremrange zset 1 3 byscore limit bad_offset 0}
+
+            assert_error "ERR limit*" {r zremrange zset 1 3 byrank limit 0 -2}
+            assert_error "ERR limit*" {r zremrange zset 1 3 byscore limit 0 str_count}
+            assert_error "ERR limit*" {r zremrange zset \[alpha \[omega bylex limit 0 -100}
+        }
+
+        test "ZREMRANGE with count - $encoding" {
+            # BYRANK
+            #create_zset zset {1 a 2 b 3 c 4 d 5 e}
+            #assert_equal 1 [r zremrange zset 1 3 limit 0 1]
+            #assert_equal 1 [r zcard zset]
+
+            # BYSCORE
+            create_zset zset {1 a 2 b 3 c 4 d 5 e}
+            assert_equal 1 [r zremrange zset 1.5 3 byscore limit 0 1]
+            assert_equal 1 [r zremrange zset 1.5 3 byscore limit 0 2]
+            assert_equal 1 [r zremrange zset 1 3 byscore limit 0 10]
+            assert_equal 2 [r zcard zset]
+
+            # BYLEX
+            create_zset zset {0 foo 0 zap 0 zip 0 ALPHA 0 alpha}
+            assert_equal 1 [r zremrange zset \[alpha \[omega bylex limit 0 1]
+            assert_equal 1 [r zremrange zset \[alpha \[omega bylex limit 0 2]
+            assert_equal 0 [r zremrange zset \[alpha \[omega bylex limit 0 10]
+            assert_equal 3 [r zcard zset]
+        }
+
+    foreach {cmd} {ZREMRANGEBYSCORE ZREMRANGE_BYSCORE} {
+        test "$cmd basics - $encoding" {
+            proc remrangebyscore {cmd min max} {
                 create_zset zset {1 a 2 b 3 c 4 d 5 e}
                 assert_equal 1 [r exists zset]
-                r zremrangebyscore zset $min $max
+                if {$cmd == "ZREMRANGEBYSCORE"} {
+                    r zremrangebyscore zset $min $max
+                } else {
+                    r zremrange zset $min $max byscore
+                }
             }
 
             # inner range
-            assert_equal 3 [remrangebyscore 2 4]
+            assert_equal 3 [remrangebyscore $cmd 2 4]
             assert_equal {a e} [r zrange zset 0 -1]
 
             # start underflow
-            assert_equal 1 [remrangebyscore -10 1]
+            assert_equal 1 [remrangebyscore $cmd -10 1]
             assert_equal {b c d e} [r zrange zset 0 -1]
 
             # end overflow
-            assert_equal 1 [remrangebyscore 5 10]
+            assert_equal 1 [remrangebyscore $cmd 5 10]
             assert_equal {a b c d} [r zrange zset 0 -1]
 
             # switch min and max
-            assert_equal 0 [remrangebyscore 4 2]
+            assert_equal 0 [remrangebyscore $cmd 4 2]
             assert_equal {a b c d e} [r zrange zset 0 -1]
 
             # -inf to mid
-            assert_equal 3 [remrangebyscore -inf 3]
+            assert_equal 3 [remrangebyscore $cmd -inf 3]
             assert_equal {d e} [r zrange zset 0 -1]
 
             # mid to +inf
-            assert_equal 3 [remrangebyscore 3 +inf]
+            assert_equal 3 [remrangebyscore $cmd 3 +inf]
             assert_equal {a b} [r zrange zset 0 -1]
 
             # -inf to +inf
-            assert_equal 5 [remrangebyscore -inf +inf]
+            assert_equal 5 [remrangebyscore $cmd -inf +inf]
             assert_equal {} [r zrange zset 0 -1]
 
             # exclusive min
-            assert_equal 4 [remrangebyscore (1 5]
+            assert_equal 4 [remrangebyscore $cmd (1 5]
             assert_equal {a} [r zrange zset 0 -1]
-            assert_equal 3 [remrangebyscore (2 5]
+            assert_equal 3 [remrangebyscore $cmd (2 5]
             assert_equal {a b} [r zrange zset 0 -1]
 
             # exclusive max
-            assert_equal 4 [remrangebyscore 1 (5]
+            assert_equal 4 [remrangebyscore $cmd 1 (5]
             assert_equal {e} [r zrange zset 0 -1]
-            assert_equal 3 [remrangebyscore 1 (4]
+            assert_equal 3 [remrangebyscore $cmd 1 (4]
             assert_equal {d e} [r zrange zset 0 -1]
 
             # exclusive min and max
-            assert_equal 3 [remrangebyscore (1 (5]
+            assert_equal 3 [remrangebyscore $cmd (1 (5]
             assert_equal {a e} [r zrange zset 0 -1]
 
             # destroy when empty
-            assert_equal 5 [remrangebyscore 1 5]
+            assert_equal 5 [remrangebyscore $cmd 1 5]
             assert_equal 0 [r exists zset]
         }
+    }
 
-        test "ZREMRANGEBYSCORE with non-value min or max - $encoding" {
+        test "ZREMRANGEBYSCORE/ZREMRANGE_BYSCORE with non-value min or max - $encoding" {
+
+
             assert_error "*not*float*" {r zremrangebyscore fooz str 1}
             assert_error "*not*float*" {r zremrangebyscore fooz 1 str}
             assert_error "*not*float*" {r zremrangebyscore fooz 1 NaN}
+
+            assert_error "*not*float*" {r zremrange fooz str 1 byscore}
+            assert_error "*not*float*" {r zremrange fooz 1 str byscore}
+            assert_error "*not*float*" {r zremrange fooz 1 NaN byscore}
         }
 
-        test "ZREMRANGEBYRANK basics - $encoding" {
-            proc remrangebyrank {min max} {
+    foreach {cmd} {ZREMRANGEBYRANK ZREMRANGE_BYRANK} {
+        test "$cmd basics - $encoding" {
+            proc remrange_byrank {cmd min max} {
                 create_zset zset {1 a 2 b 3 c 4 d 5 e}
                 assert_equal 1 [r exists zset]
-                r zremrangebyrank zset $min $max
+                if {$cmd == "ZREMRANGEBYRANK"} {
+                    r zremrangebyrank zset $min $max
+                } else {
+                    r zremrange zset $min $max byrank
+                }
             }
 
+            puts "$cmd 1111111111111111"
             # inner range
-            assert_equal 3 [remrangebyrank 1 3]
+            assert_equal 3 [remrange_byrank $cmd 1 3]
+            puts "$cmd 22222222"
             assert_equal {a e} [r zrange zset 0 -1]
+            puts "$cmd 333333333333333"
 
             # start underflow
-            assert_equal 1 [remrangebyrank -10 0]
+            assert_equal 1 [remrange_byrank $cmd -10 0]
+            puts "$cmd 44444444444"
             assert_equal {b c d e} [r zrange zset 0 -1]
+            puts "$cmd 5555555555555"
 
             # start overflow
-            assert_equal 0 [remrangebyrank 10 -1]
+            assert_equal 0 [remrange_byrank $cmd 10 -1]
+            puts "$cmd 66666666666"
             assert_equal {a b c d e} [r zrange zset 0 -1]
+            puts "$cmd 7777777777777"
 
             # end underflow
-            assert_equal 0 [remrangebyrank 0 -10]
+            assert_equal 0 [remrange_byrank $cmd 0 -10]
             assert_equal {a b c d e} [r zrange zset 0 -1]
 
             # end overflow
-            assert_equal 5 [remrangebyrank 0 10]
+            assert_equal 5 [remrange_byrank $cmd 0 10]
             assert_equal {} [r zrange zset 0 -1]
 
             # destroy when empty
-            assert_equal 5 [remrangebyrank 0 4]
+            assert_equal 5 [remrange_byrank $cmd 0 4]
             assert_equal 0 [r exists zset]
+        }
+    }
+
+        test "ZREMRANGEBYRANK/ZREMRANGE_BYRANK with non-integer min or max - $encoding" {
+            assert_error "*not*integer*" {r zremrangebyrank fooz str 1}
+            assert_error "*not*integer*" {r zremrangebyrank fooz 1 str}
+            assert_error "*not*integer*" {r zremrangebyrank fooz 1 NaN}
+
+            assert_error "*not*integer*" {r zremrange fooz str 1 byrank}
+            assert_error "*not*integer*" {r zremrange fooz 1 str byrank}
+            assert_error "*not*integer*" {r zremrange fooz 1 NaN byrank}
         }
 
         test "ZUNIONSTORE against non-existing key doesn't set destination - $encoding" {
@@ -843,7 +1104,7 @@ start_server {tags {"zset"}} {
             assert_equal {b 3 c 5} [r zinter 2 zseta{t} zsetb{t} withscores]
         }
 
-        test "ZINTERCARD with illegal arguments" {
+        test "ZINTERCARD with illegal arguments - $encoding" {
             assert_error "ERR syntax error*" {r zintercard 1 zseta{t} zseta{t}}
             assert_error "ERR syntax error*" {r zintercard 1 zseta{t} bar_arg}
             assert_error "ERR syntax error*" {r zintercard 1 zseta{t} LIMIT}
@@ -1105,8 +1366,8 @@ start_server {tags {"zset"}} {
         r config set zset-max-ziplist-value $original_max_value
     }
 
-    basics listpack
     basics skiplist
+    #basics listpack
 
     test "ZPOP/ZMPOP against wrong type" {
         r set foo{t} bar
@@ -1699,7 +1960,8 @@ start_server {tags {"zset"}} {
             }
         }
 
-        test "ZREMRANGEBYLEX fuzzy test, 100 ranges in $elements element sorted set - $encoding" {
+    foreach {cmd} {ZREMRANGEBYLEX ZREMRANGE_BYLEX} {
+        test "$cmd fuzzy test, 100 ranges in $elements element sorted set - $encoding" {
             set lexset {}
             r del zset{t} zsetcopy{t}
             for {set j 0} {$j < $elements} {incr j} {
@@ -1726,7 +1988,11 @@ start_server {tags {"zset"}} {
                 # Get the range we are going to remove
                 set torem [r zrangebylex zset{t} $cmin $cmax]
                 set toremlen [r zlexcount zset{t} $cmin $cmax]
-                r zremrangebylex zsetcopy{t} $cmin $cmax
+                if {$cmd == "ZREMRANGEBYLEX"} {
+                    r zremrangebylex zsetcopy{t} $cmin $cmax
+                } else {
+                    r zremrange zsetcopy{t} $cmin $cmax bylex
+                }
                 set output [r zrange zsetcopy{t} 0 -1]
 
                 # Remove the range with Tcl from the original list
@@ -1738,6 +2004,7 @@ start_server {tags {"zset"}} {
                 assert {$lexsetcopy eq $output}
             }
         }
+    }
 
         test "ZSETs skiplist implementation backlink consistency test - $encoding" {
             set diff 0

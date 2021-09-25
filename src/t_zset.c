@@ -66,6 +66,8 @@
 int zslLexValueGteMin(sds value, zlexrangespec *spec);
 int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
+int zslIsInLexRange(zskiplist *zsl, zlexrangespec *range);
+
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
 zskiplistNode *zslCreateNode(int level, double score, sds ele) {
@@ -84,7 +86,7 @@ zskiplist *zslCreate(void) {
     zsl = zmalloc(sizeof(*zsl));
     zsl->level = 1;
     zsl->length = 0;
-    zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0,NULL);
+    zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0, sdsnew("header"));
     for (j = 0; j < ZSKIPLIST_MAXLEVEL; j++) {
         zsl->header->level[j].forward = NULL;
         zsl->header->level[j].span = 0;
@@ -135,20 +137,64 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     int i, level;
 
     serverAssert(!isnan(score));
+
+    serverLog(LL_WARNING, "1111111111111111");
+
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         /* store rank that is crossed to reach the insert position */
+        serverLog(LL_WARNING, "i: %d", i);
+
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
-        while (x->level[i].forward &&
-                (x->level[i].forward->score < score ||
-                    (x->level[i].forward->score == score &&
-                    sdscmp(x->level[i].forward->ele,ele) < 0)))
-        {
-            rank[i] += x->level[i].span;
-            x = x->level[i].forward;
+        serverLog(LL_WARNING, "2 i: %d", i);
+
+
+        if (x->level[i].forward) {
+            serverLog(LL_WARNING, "000000000");
+
+            double score = x->level[i].forward->score;
+            serverLog(LL_WARNING, "111111111111");
+            sds member = x->level[i].forward->ele;
+            serverLog(LL_WARNING, "2222222222222");
+
+
+            serverLog(LL_WARNING, "111 i: %d", i);
+            serverLog(LL_WARNING, "score: %f", score);
+            serverLog(LL_WARNING, "member: %s", member);
+            serverLog(LL_WARNING, "ele: %s", ele);
+        } else {
+            serverLog(LL_WARNING, "222222222222222222222222");
         }
+
+
+        while (x->level[i].forward)
+        {
+            if (x->level[i].forward->score < score) {
+                serverLog(LL_WARNING, "fffffffffffffff");
+            } else {
+                serverLog(LL_WARNING, "kkkkkkkkkkkkkkk");
+                break;
+
+            }
+            if (x->level[i].forward) {
+                double score = x->level[i].forward->score;
+                sds member = x->level[i].forward->ele;
+                serverLog(LL_WARNING, "222 i: %d, score: %f, member: %s, ele: %s", i, score, member, ele);
+            }
+
+            rank[i] += x->level[i].span;
+            serverLog(LL_WARNING, "3333333333333");
+
+            x = x->level[i].forward;
+            serverLog(LL_WARNING, "55555555");
+        }
+
+        serverLog(LL_WARNING, "update");
         update[i] = x;
     }
+
+
+    serverLog(LL_WARNING, "2222222222222222");
     /* we assume the element is not already inside, since we allow duplicated
      * scores, reinserting the same element should never happen since the
      * caller of zslInsert() should test in the hash table if the element is
@@ -162,6 +208,9 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         }
         zsl->level = level;
     }
+
+
+    serverLog(LL_WARNING, "333333333333333");
     x = zslCreateNode(level,score,ele);
     for (i = 0; i < level; i++) {
         x->level[i].forward = update[i]->level[i].forward;
@@ -172,6 +221,8 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         update[i]->level[i].span = (rank[0] - rank[i]) + 1;
     }
 
+
+    serverLog(LL_WARNING, "444444444444444");
     /* increment span for untouched levels */
     for (i = level; i < zsl->level; i++) {
         update[i]->level[i].span++;
@@ -183,6 +234,9 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     else
         zsl->tail = x;
     zsl->length++;
+
+
+    serverLog(LL_WARNING, "555555555555555");
     return x;
 }
 
@@ -376,50 +430,186 @@ zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range) {
     return x;
 }
 
+
 /* Delete all the elements with score between min and max from the skiplist.
  * Both min and max can be inclusive or exclusive (see range->minex and
  * range->maxex). When inclusive a score >= min && score <= max is deleted.
  * Note that this function takes the reference to the hash table view of the
  * sorted set, in order to remove the elements from the hash table too. */
-unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range, dict *dict) {
+unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range, dict *dict, long offset, long limit) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned long removed = 0;
     int i;
 
     x = zsl->header;
-    for (i = zsl->level-1; i >= 0; i--) {
+    unsigned long span = 0;
+
+    serverLog(LL_WARNING, "offset: %ld, limit: %ld", offset, limit);
+
+    /* We take care the 0 level first. */
+    zskiplistNode *first = zsl->header;
+    while (first->level[0].forward &&
+           !zslValueGteMin(first->level[0].forward->score, range))
+    {
+        serverLog(LL_WARNING, "1 score: %f, span: %lu", first->score, span);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+
+    while (first->level[0].forward && offset--) {
+        serverLog(LL_WARNING, "2 offset-- score: %f", first->score);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+
+    update[0] = first;
+
+    /* Current node is the last with score < or <= min. */
+    span += first->level[0].span;
+    first = first->level[0].forward;
+
+    if (first == NULL) return removed;
+
+    serverLog(LL_WARNING, "first_span: %lu, first_score: %f", span, first->score);
+
+    x = zsl->header;
+    unsigned long level_span = 0;
+
+    for (i = zsl->level-1; i > 0; i--) {
+        /*
         while (x->level[i].forward &&
-            !zslValueGteMin(x->level[i].forward->score, range))
-                x = x->level[i].forward;
+               !zslValueGteMin(x->level[i].forward->score, range))
+        {
+            serverLog(LL_WARNING, "x->level[i].span: %lu", x->level[i].span);
+            level_span += x->level[i].span;
+            x = x->level[i].forward;
+        }
+         */
+
+        // we should check the span
+        while (x->level[i].forward) {
+            serverLog(LL_WARNING, "before skip span: %lu, score: %f, level_span: %ld", x->level[i].span, x->score, level_span);
+            if ((level_span + x->level[i].span < span)) {
+            } else {
+                serverLog(LL_WARNING, "break");
+                break;
+            }
+
+            level_span += x->level[i].span;
+            serverLog(LL_WARNING, "after skip span: %lu, score: %f, level_span: %ld", x->level[i].span, x->score, level_span);
+
+            x = x->level[i].forward;
+        }
+
         update[i] = x;
+        serverLog(LL_WARNING, "level: %d, update[i], score: %f", i, x->score);
     }
 
     /* Current node is the last with score < or <= min. */
-    x = x->level[0].forward;
+    // x = x->level[0].forward;
+    // span += first->level[0].span;
+    // x = first->level[0].forward;
+    x = first;
 
     /* Delete nodes while in range. */
     while (x && zslValueLteMax(x->score, range)) {
+        serverLog(LL_WARNING, "delete score: %f", x->score);
+
         zskiplistNode *next = x->level[0].forward;
         zslDeleteNode(zsl,x,update);
         dictDelete(dict,x->ele);
         zslFreeNode(x); /* Here is where x->ele is actually released. */
         removed++;
+        /* We stop traversing after reaching the limit. */
+        if (limit > 0 && removed >= (unsigned long)limit) break;
         x = next;
+        serverLog(LL_WARNING, "delete next");
     }
+
     return removed;
 }
 
-unsigned long zslDeleteRangeByLex(zskiplist *zsl, zlexrangespec *range, dict *dict) {
+/* Delete all the elements with score between min and max from the skiplist.
+ * Both min and max can be inclusive or exclusive (see range->minex and
+ * range->maxex). When inclusive a score >= min && score <= max is deleted.
+ * Note that this function takes the reference to the hash table view of the
+ * sorted set, in order to remove the elements from the hash table too. */
+unsigned long zslDeleteRangeByScoreRev(zskiplist *zsl, zrangespec *range, dict *dict, long offset, long limit) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    zskiplistNode *last;
+    zskiplistNode *first;
     unsigned long removed = 0;
     int i;
 
 
+    // 先找到范围里的最后一个元素
+    // 然后往前走 count 步
+    // 然后记住那个节点，构造update 搜索路径
+
+    last = zslLastInRange(zsl, range);
+    if (last == NULL) return removed;
+
+    while (last && last->backward && offset--) {
+        if (!zslValueGteMin(last->backward->score, range)) break;
+        last = last->backward;
+    }
+
+    first = last;
+
+    limit--;
+    while (first && first->backward && limit--) {
+        if (!zslValueGteMin(first->backward->score, range)) break;
+        first = first->backward;
+    }
+
+    serverLog(LL_WARNING, "last: %s, first: %s", last->ele, first->ele);
+
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         while (x->level[i].forward &&
-            !zslLexValueGteMin(x->level[i].forward->ele,range))
-                x = x->level[i].forward;
+                (x->level[i].forward->score < first->score ||
+                   (x->level[i].forward->score == first->score &&
+                           sdscmp(x->level[i].forward->ele, first->ele) < 0)))
+        {
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+
+    /* Delete nodes while in range. */
+    x = first;
+    int is_last;
+
+    while (x) {
+
+        zskiplistNode *next;
+        next = x->level[0].forward;
+
+        is_last = x == last;
+
+        zslDeleteNode(zsl,x,update);
+        serverLog(LL_WARNING, "delete: %s", x->ele);
+        dictDelete(dict,x->ele);
+        zslFreeNode(x); /* Here is where x->ele is actually released. */
+        removed++;
+
+        if (is_last) break;
+        x = next;
+
+    }
+    return removed;
+}
+
+unsigned long zslDeleteRangeByLex(zskiplist *zsl, zlexrangespec *range, dict *dict, long offset, long limit) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    unsigned long removed = 0;
+    int i;
+    UNUSED(offset);
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        while (x->level[i].forward &&
+               !zslLexValueGteMin(x->level[i].forward->ele,range))
+            x = x->level[i].forward;
         update[i] = x;
     }
 
@@ -433,6 +623,54 @@ unsigned long zslDeleteRangeByLex(zskiplist *zsl, zlexrangespec *range, dict *di
         dictDelete(dict,x->ele);
         zslFreeNode(x); /* Here is where x->ele is actually released. */
         removed++;
+        /* We stop traversing after reaching the limit. */
+        if (limit > 0 && removed >= (unsigned long)limit) break;
+        x = next;
+    }
+    return removed;
+}
+
+unsigned long zslDeleteRangeByLexRev(zskiplist *zsl, zlexrangespec *range, dict *dict, long offset, long limit) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    zskiplistNode *first, *last;
+    unsigned long removed = 0;
+    int i;
+    UNUSED(offset);
+
+    last = zslLastInLexRange(zsl, range);
+    if (last == NULL) return removed;
+
+    first = last;
+    while (first && first->backward && --limit) {
+        if (!zslLexValueGteMin(first->ele, range)) break;
+        first = first->backward;
+    }
+
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        while (x->level[i].forward &&
+               (x->level[i].forward->score < first->score ||
+                (x->level[i].forward->score == first->score &&
+                 sdscmp(x->level[i].forward->ele, first->ele) < 0)))
+        {
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+
+    /* Delete nodes while in range. */
+    x = first;
+    int is_last;
+    while (x) {
+        zskiplistNode *next;
+        next = x->level[0].forward;
+        is_last = x == last;
+        zslDeleteNode(zsl,x,update);
+        dictDelete(dict,x->ele);
+        zslFreeNode(x); /* Here is where x->ele is actually released. */
+        removed++;
+
+        if (is_last) break;
         x = next;
     }
     return removed;
@@ -1078,52 +1316,158 @@ unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
     return zl;
 }
 
-unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, unsigned long *deleted) {
+unsigned char *zzlDeleteRangeByScore(unsigned char *zl, zrangespec *range, long offset, long limit,
+                                     int reverse, unsigned long *deleted) {
     unsigned char *eptr, *sptr;
     double score;
     unsigned long num = 0;
 
     if (deleted != NULL) *deleted = 0;
 
-    eptr = zzlFirstInRange(zl,range);
+    if (reverse) {
+        eptr = zzlLastInRange(zl, range);
+    } else {
+        eptr = zzlFirstInRange(zl, range);
+    }
     if (eptr == NULL) return zl;
 
-    /* When the tail of the listpack is deleted, eptr will be NULL. */
-    while (eptr && (sptr = lpNext(zl,eptr)) != NULL) {
-        score = zzlGetScore(sptr);
-        if (zslValueLteMax(score,range)) {
-            /* Delete both the element and the score. */
-            zl = lpDeleteRangeWithEntry(zl,&eptr,2);
-            num++;
+    /* Get score pointer for the first element. */
+    sptr = lpNext(zl, eptr);
+    if (sptr == NULL) return zl;
+
+    score = zzlGetScore(sptr);
+    serverLog(LL_WARNING, "offset: %ld, limit: %ld, score: %f", offset, limit, score);
+
+    while (eptr && offset--) {
+        serverLog(LL_WARNING, "ffffffffffff");
+        if (reverse) {
+            zzlPrev(zl, &eptr, &sptr);
         } else {
-            /* No longer in range. */
-            break;
+            zzlNext(zl, &eptr, &sptr);
         }
+    }
+    long tmp_limit = limit;
+    long tmp_count = limit;
+
+    if (reverse) {
+        tmp_count = 0;
+        unsigned char *last_sptr = NULL;
+        unsigned char *last_eptr = NULL;
+        while (eptr && tmp_limit--) {
+            score = zzlGetScore(sptr);
+            serverLog(LL_WARNING, "sptr 111 score: %f", score);
+
+            /* Abort when the node is no longer in range. */
+            if (!zslValueGteMin(score,range)) break;
+
+            last_eptr = eptr;
+            last_sptr = sptr;
+
+            /* Move to next node */
+            zzlPrev(zl, &eptr, &sptr);
+
+            tmp_count++;
+        }
+
+        eptr = last_eptr;
+        sptr = last_sptr;
+    }
+
+    if (sptr) {
+        score = zzlGetScore(sptr);
+        serverLog(LL_WARNING, "sptr before score: %f", score);
+    }
+
+    // todo zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+    // zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
+    /* When the tail of the listpack is deleted, eptr will be NULL. */
+    while (eptr && sptr && tmp_count--) {
+        score = zzlGetScore(sptr);
+
+        serverLog(LL_WARNING, "sptr score: %f", score);
+
+        /* Abort when the node is no longer in range. */
+        if (!zslValueLteMax(score, range)) break;
+
+        // zl = zzlDelete(zl, eptr);
+
+        /* Delete both the element and the score. */
+        zl = lpDeleteRangeWithEntry(zl,&eptr,2);
+        num++;
+        /* We stop traversing after reaching the limit. */
+        if (limit > 0 && num >= (unsigned long)limit) break;
+
+        if (eptr == NULL) break;
+
+        //if (reverse) {
+             // zzlPrev(zl, &eptr, &sptr);
+        //    sptr = lpPrev(zl, eptr);
+        //} else {
+             //zzlNext(zl, &eptr, &sptr);
+        sptr = lpNext(zl, eptr);
+        //}
     }
 
     if (deleted != NULL) *deleted = num;
     return zl;
 }
 
-unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, unsigned long *deleted) {
+unsigned char *zzlDeleteRangeByLex(unsigned char *zl, zlexrangespec *range, long offset, long limit,
+                                   int reverse, unsigned long *deleted) {
     unsigned char *eptr, *sptr;
     unsigned long num = 0;
 
     if (deleted != NULL) *deleted = 0;
 
-    eptr = zzlFirstInLexRange(zl,range);
+    if (reverse)
+        eptr = zzlLastInLexRange(zl,range);
+    else
+        eptr = zzlFirstInLexRange(zl,range);
     if (eptr == NULL) return zl;
 
-    /* When the tail of the listpack is deleted, eptr will be NULL. */
-    while (eptr && (sptr = lpNext(zl,eptr)) != NULL) {
-        if (zzlLexValueLteMax(eptr,range)) {
-            /* Delete both the element and the score. */
-            zl = lpDeleteRangeWithEntry(zl,&eptr,2);
-            num++;
+    sptr = lpNext(zl, eptr);
+    if (sptr == NULL) return zl;
+
+    while (eptr && offset--) {
+        if (reverse) {
+            zzlPrev(zl, &eptr, &sptr);
         } else {
-            /* No longer in range. */
-            break;
+            zzlNext(zl, &eptr, &sptr);
         }
+    }
+
+    if (reverse) {
+        long tmp_limit = limit;
+        unsigned char *last_sptr = NULL;
+        unsigned char *last_eptr = NULL;
+
+        while (eptr && tmp_limit--) {
+            /* Abort when the node is no longer in range. */
+            if (!zzlLexValueGteMin(eptr,range)) break;
+
+            last_eptr = eptr;
+            last_sptr = sptr;
+
+            /* Move to next node */
+            zzlPrev(zl, &eptr, &sptr);
+        }
+
+        eptr = last_eptr;
+        sptr = last_sptr;
+    }
+
+    /* When the tail of the listpack is deleted, eptr will be NULL. */
+    while (eptr && sptr) {
+        if (!zzlLexValueLteMax(eptr,range)) break;
+
+        /* Delete both the element and the score. */
+        zl = lpDeleteRangeWithEntry(zl,&eptr,2);
+        num++;
+        /* We stop traversing after reaching the limit. */
+        if (limit > 0 && num >= (unsigned long)limit) break;
+
+        if (eptr == NULL) break;
+        sptr = lpNext(zl, eptr);
     }
 
     if (deleted != NULL) *deleted = num;
@@ -1322,6 +1666,8 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
         return 0;
     }
 
+    serverLog(LL_WARNING, "encoding: %d", zobj->encoding);
+
     /* Update the sorted set according to its encoding. */
     if (zobj->encoding == OBJ_ENCODING_LISTPACK) {
         unsigned char *eptr;
@@ -1386,6 +1732,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
 
         de = dictFind(zs->dict,ele);
         if (de != NULL) {
+            serverLog(LL_WARNING, "111111111111111");
             /* NX? Return, same element already exists. */
             if (nx) {
                 *out_flags |= ZADD_OUT_NOP;
@@ -1413,7 +1760,11 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
 
             /* Remove and re-insert when score changes. */
             if (score != curscore) {
+                serverLog(LL_WARNING, "222222222222222");
+
                 znode = zslUpdateScore(zs->zsl,curscore,ele,score);
+                serverLog(LL_WARNING, "3333333333333");
+
                 /* Note that we did not removed the original element from
                  * the hash table representing the sorted set, so we just
                  * update the score. */
@@ -1422,8 +1773,12 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
             }
             return 1;
         } else if (!xx) {
+            serverLog(LL_WARNING, "44444444444444");
+
             ele = sdsdup(ele);
             znode = zslInsert(zs->zsl,score,ele);
+            serverLog(LL_WARNING, "5555555555555");
+
             serverAssert(dictAdd(zs->dict,ele,&znode->score) == DICT_OK);
             *out_flags |= ZADD_OUT_ADDED;
             if (newscore) *newscore = score;
@@ -1823,8 +2178,28 @@ typedef enum {
     ZRANGE_LEX,
 } zrange_type;
 
-/* Implements ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZREMRANGEBYLEX commands. */
-void zremrangeGenericCommand(client *c, zrange_type rangetype) {
+void genericZrangebyRangetypeCommand(client *c,
+                                     zrange_type rangetype, robj *zobj,
+                                     long start, long end,
+                                     zrangespec *range, zlexrangespec *lexrange,
+                                     long offset, long limit,
+                                     int withscores, int reverse);
+
+/* Implements ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZREMRANGEBYLEX, ZREMRANGE commands.
+ *
+ * 'offset'
+ * 'limit'
+ *
+ * 'is_get' when true the command will behave look like pop, we will return the elements before
+ * actually do the remove. The return value depends on the following `withscores` parameter.
+ *
+ * 'withscores' only work with is_get, the behave and return value exactly like `ZRANGE` command.
+ *
+ * 'reverse'
+ * */
+void zremrangeGenericCommand(client *c, zrange_type rangetype,
+                             long offset, long limit, int is_get,
+                             int withscores, int reverse) {
     robj *key = c->argv[1];
     robj *zobj;
     int keyremoved = 0;
@@ -1833,22 +2208,32 @@ void zremrangeGenericCommand(client *c, zrange_type rangetype) {
     zlexrangespec lexrange;
     long start, end, llen;
     char *notify_type = NULL;
+    int return_empty = 0;
+    int minidx = 2;
+    int maxidx = 3;
+
+    if (reverse && (rangetype == ZRANGE_SCORE || rangetype == ZRANGE_LEX)) {
+        /* Range is given as [max,min] */
+        int tmp = maxidx;
+        maxidx = minidx;
+        minidx = tmp;
+    }
 
     /* Step 1: Parse the range. */
     if (rangetype == ZRANGE_RANK) {
         notify_type = "zremrangebyrank";
-        if ((getLongFromObjectOrReply(c,c->argv[2],&start,NULL) != C_OK) ||
-            (getLongFromObjectOrReply(c,c->argv[3],&end,NULL) != C_OK))
+        if ((getLongFromObjectOrReply(c, c->argv[minidx], &start, NULL) != C_OK) ||
+            (getLongFromObjectOrReply(c, c->argv[maxidx], &end, NULL) != C_OK))
             return;
     } else if (rangetype == ZRANGE_SCORE) {
         notify_type = "zremrangebyscore";
-        if (zslParseRange(c->argv[2],c->argv[3],&range) != C_OK) {
+        if (zslParseRange(c->argv[minidx], c->argv[maxidx], &range) != C_OK) {
             addReplyError(c,"min or max is not a float");
             return;
         }
     } else if (rangetype == ZRANGE_LEX) {
         notify_type = "zremrangebylex";
-        if (zslParseLexRange(c->argv[2],c->argv[3],&lexrange) != C_OK) {
+        if (zslParseLexRange(c->argv[minidx], c->argv[maxidx], &lexrange) != C_OK) {
             addReplyError(c,"min or max not valid string range item");
             return;
         }
@@ -1857,12 +2242,19 @@ void zremrangeGenericCommand(client *c, zrange_type rangetype) {
     }
 
     /* Step 2: Lookup & range sanity checks if needed. */
-    if ((zobj = lookupKeyWriteOrReply(c,key,shared.czero)) == NULL ||
-        checkType(c,zobj,OBJ_ZSET)) goto cleanup;
+    zobj = lookupKeyWrite(c->db, key);
+    if (checkType(c, zobj, OBJ_ZSET)) goto cleanup;
+
+    /* If key non exist or limit is zero, serve if ASAP. */
+    if (zobj == NULL || limit == 0) {
+        return_empty = 1;
+        goto cleanup;
+    }
+
+    llen = zsetLength(zobj);
 
     if (rangetype == ZRANGE_RANK) {
         /* Sanitize indexes. */
-        llen = zsetLength(zobj);
         if (start < 0) start = llen+start;
         if (end < 0) end = llen+end;
         if (start < 0) start = 0;
@@ -1870,25 +2262,34 @@ void zremrangeGenericCommand(client *c, zrange_type rangetype) {
         /* Invariant: start >= 0, so this test will be true when end < 0.
          * The range is empty when start > end or start >= length. */
         if (start > end || start >= llen) {
-            addReply(c,shared.czero);
+            return_empty = 1;
             goto cleanup;
         }
         if (end >= llen) end = llen-1;
     }
 
+    if (is_get) {
+        /*  */
+        genericZrangebyRangetypeCommand(c, rangetype, zobj,
+                                        start, end,
+                                        &range, &lexrange,
+                                        offset, limit,
+                                        withscores, reverse);
+    }
+
     /* Step 3: Perform the range deletion operation. */
     if (zobj->encoding == OBJ_ENCODING_LISTPACK) {
         switch(rangetype) {
-        case ZRANGE_AUTO:
-        case ZRANGE_RANK:
-            zobj->ptr = zzlDeleteRangeByRank(zobj->ptr,start+1,end+1,&deleted);
-            break;
-        case ZRANGE_SCORE:
-            zobj->ptr = zzlDeleteRangeByScore(zobj->ptr,&range,&deleted);
-            break;
-        case ZRANGE_LEX:
-            zobj->ptr = zzlDeleteRangeByLex(zobj->ptr,&lexrange,&deleted);
-            break;
+            case ZRANGE_AUTO:
+            case ZRANGE_RANK:
+                zobj->ptr = zzlDeleteRangeByRank(zobj->ptr,start+1,end+1,&deleted);
+                break;
+            case ZRANGE_SCORE:
+                zobj->ptr = zzlDeleteRangeByScore(zobj->ptr, &range, offset, limit, reverse, &deleted);
+                break;
+            case ZRANGE_LEX:
+                zobj->ptr = zzlDeleteRangeByLex(zobj->ptr, &lexrange, offset, limit, reverse, &deleted);
+                break;
         }
         if (zzlLength(zobj->ptr) == 0) {
             dbDelete(c->db,key);
@@ -1897,16 +2298,24 @@ void zremrangeGenericCommand(client *c, zrange_type rangetype) {
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = zobj->ptr;
         switch(rangetype) {
-        case ZRANGE_AUTO:
-        case ZRANGE_RANK:
-            deleted = zslDeleteRangeByRank(zs->zsl,start+1,end+1,zs->dict);
-            break;
-        case ZRANGE_SCORE:
-            deleted = zslDeleteRangeByScore(zs->zsl,&range,zs->dict);
-            break;
-        case ZRANGE_LEX:
-            deleted = zslDeleteRangeByLex(zs->zsl,&lexrange,zs->dict);
-            break;
+            case ZRANGE_AUTO:
+            case ZRANGE_RANK:
+                deleted = zslDeleteRangeByRank(zs->zsl,start+1,end+1,zs->dict);
+                break;
+            case ZRANGE_SCORE:
+                if (reverse) {
+                    deleted = zslDeleteRangeByScoreRev(zs->zsl, &range, zs->dict, offset, limit);
+                } else {
+                    deleted = zslDeleteRangeByScore(zs->zsl, &range, zs->dict, offset, limit);
+                }
+                break;
+            case ZRANGE_LEX:
+                if (reverse) {
+                    deleted = zslDeleteRangeByLexRev(zs->zsl, &lexrange, zs->dict, offset, limit);
+                } else {
+                    deleted = zslDeleteRangeByLex(zs->zsl, &lexrange, zs->dict, offset, limit);
+                }
+                break;
         }
         if (htNeedsResize(zs->dict)) dictResize(zs->dict);
         if (dictSize(zs->dict) == 0) {
@@ -1925,22 +2334,97 @@ void zremrangeGenericCommand(client *c, zrange_type rangetype) {
             notifyKeyspaceEvent(NOTIFY_GENERIC,"del",key,c->db->id);
     }
     server.dirty += deleted;
-    addReplyLongLong(c,deleted);
+
+    if (!is_get)
+        addReplyLongLong(c,deleted);
 
 cleanup:
+    if (return_empty) {
+        if (is_get) {
+            /* If we are not able to pop up any elements, return empty array. */
+            addReply(c, shared.emptyarray);
+        } else {
+            /* Otherwise we are not able remove any elements, return 0. */
+            addReply(c, shared.czero);
+        }
+    }
+
     if (rangetype == ZRANGE_LEX) zslFreeLexRange(&lexrange);
 }
 
+/* ZREMRANGEBYRANK key start stop */
 void zremrangebyrankCommand(client *c) {
-    zremrangeGenericCommand(c,ZRANGE_RANK);
+    zremrangeGenericCommand(c, ZRANGE_RANK, 0, -1, 0, 0, 0);
 }
 
+/* ZREMRANGEBYSCORE key min max */
 void zremrangebyscoreCommand(client *c) {
-    zremrangeGenericCommand(c,ZRANGE_SCORE);
+    zremrangeGenericCommand(c, ZRANGE_SCORE, 0, -1, 0, 0, 0);
 }
 
+/* ZREMRANGEBYRANK key start stop */
 void zremrangebylexCommand(client *c) {
-    zremrangeGenericCommand(c,ZRANGE_LEX);
+    zremrangeGenericCommand(c, ZRANGE_LEX, 0, -1, 0, 0, 0);
+}
+
+/* ZREMRANGE key start|min stop|max [BYRANK|BYSCORE|BYLEX] [REV] [GET] [COUNT count] */
+void zremrangeCommand(client *c) {
+    int j;
+    int rangetype = ZRANGE_RANK;
+    long offset = 0;
+    long limit = -1;
+    int limit_is_set = 0; /* Determine whether the limit variant is set. */
+    int is_get = 0;
+    int withscores = 0;
+    int reverse = 0;
+
+    /* Parse the optional arguments. */
+    for (j = 4; j < c->argc; j++) {
+        char *opt = c->argv[j]->ptr;
+        int leftargs = (c->argc - 1) - j;
+
+        /* We will parse the range in zremrangeGenericCommand. */
+        if (!strcasecmp(opt, "BYRANK")) {
+            rangetype = ZRANGE_RANK;
+        } else if (!strcasecmp(opt, "BYSCORE")) {
+            rangetype = ZRANGE_SCORE;
+        } else if (!strcasecmp(opt, "BYLEX")) {
+            rangetype = ZRANGE_LEX;
+        } else if (!strcasecmp(c->argv[j]->ptr, "LIMIT") && leftargs >= 2) {
+            if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, LONG_MAX,
+                                              &offset, "offset should be greater than or equal to 0") != C_OK)
+                return;
+
+            if (getRangeLongFromObjectOrReply(c, c->argv[j+2], -1, LONG_MAX,
+                                              &limit, "limit should be greater than or equal to -1") != C_OK)
+                return;
+
+            limit_is_set = 1;
+            j += 2;
+        } else if (!reverse && !strcasecmp(opt, "REV")) {
+            reverse = 1;
+            serverLog(LL_WARNING, "reverse: %d", reverse);
+        } else if (!withscores && !strcasecmp(opt, "WITHSCORES")) {
+            withscores = 1;
+        } else if (!is_get && !strcasecmp(opt, "GET")) {
+            is_get = 1;
+        } else {
+            addReplyErrorObject(c, shared.syntaxerr);
+            return;
+        }
+    }
+
+    /* Check for conflicting arguments. */
+    if (withscores && !is_get) {
+        addReplyError(c, "syntax error, WITHSCORES is only supported in combination with GET");
+        return;
+    }
+    if (limit_is_set && rangetype == ZRANGE_RANK) {
+        addReplyError(c, "syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX");
+        return;
+    }
+
+    zremrangeGenericCommand(c, rangetype, offset, limit, is_get, withscores, reverse);
 }
 
 typedef struct {
@@ -2530,7 +3014,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
     zskiplistNode *znode;
     int withscores = 0;
     unsigned long cardinality = 0;
-    long limit = 0; /* Stop searching after reaching the limit. 0 means unlimited. */
+    long limit = 0; /* Stop searching after reaching the count. 0 means unlimited. */
 
     /* expect setnum input keys to be given */
     if ((getLongFromObjectOrReply(c, c->argv[numkeysIndex], &setnum, NULL) != C_OK))
@@ -3188,6 +3672,7 @@ void genericZrangebyscoreCommand(zrange_result_handler *handler,
             }
         }
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
+        // todo zbb byscore
         zset *zs = zobj->ptr;
         zskiplist *zsl = zs->zsl;
         zskiplistNode *ln;
@@ -3527,6 +4012,35 @@ void zrevrangebylexCommand(client *c) {
     zrange_result_handler handler;
     zrangeResultHandlerInit(&handler, c, ZRANGE_CONSUMER_TYPE_CLIENT);
     zrangeGenericCommand(&handler, 1, 0, ZRANGE_LEX, ZRANGE_DIRECTION_REVERSE);
+}
+
+void genericZrangebyRangetypeCommand(client *c,
+                                     zrange_type rangetype, robj *zobj,
+                                     long start, long end,
+                                     zrangespec *range, zlexrangespec *lexrange,
+                                     long offset, long limit,
+                                     int withscores, int reverse)
+{
+    zrange_result_handler handler;
+    zrangeResultHandlerInit(&handler, c, ZRANGE_CONSUMER_TYPE_CLIENT);
+
+    if (withscores)
+        zrangeResultHandlerScoreEmissionEnable(&handler);
+
+    switch (rangetype) {
+        case ZRANGE_AUTO:
+        case ZRANGE_RANK:
+            genericZrangebyrankCommand(&handler, zobj, start, end, withscores, reverse);
+            break;
+
+        case ZRANGE_SCORE:
+            genericZrangebyscoreCommand(&handler, range, zobj, offset, limit, reverse);
+            break;
+
+        case ZRANGE_LEX:
+            genericZrangebylexCommand(&handler, lexrange, zobj, withscores, offset, limit, reverse);
+            break;
+    }
 }
 
 /**

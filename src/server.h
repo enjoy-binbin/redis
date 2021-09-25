@@ -411,7 +411,7 @@ typedef enum {
 #define UNUSED(V) ((void) V)
 
 #define ZSKIPLIST_MAXLEVEL 32 /* Should be enough for 2^64 elements */
-#define ZSKIPLIST_P 0.25      /* Skiplist P = 1/4 */
+#define ZSKIPLIST_P 0.66      /* Skiplist P = 1/4 */
 
 /* Append only defines */
 #define AOF_FSYNC_NO 0
@@ -2893,6 +2893,7 @@ void zscoreCommand(client *c);
 void zmscoreCommand(client *c);
 void zremrangebyscoreCommand(client *c);
 void zremrangebylexCommand(client *c);
+void zremrangeCommand(client *c);
 void zpopminCommand(client *c);
 void zpopmaxCommand(client *c);
 void zmpopCommand(client *c);
