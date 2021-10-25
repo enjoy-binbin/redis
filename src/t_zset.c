@@ -588,17 +588,71 @@ unsigned long zslDeleteRangeByLex(zskiplist *zsl, zlexrangespec *range, dict *di
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned long removed = 0;
     int i;
-    UNUSED(offset);
     x = zsl->header;
-    for (i = zsl->level-1; i >= 0; i--) {
+    unsigned long span = 0;
+    serverLog(LL_WARNING, "offset: %ld, limit: %ld", offset, limit);
+
+    /* We take care the 0 level first. */
+    zskiplistNode *first = zsl->header;
+    while (first->level[0].forward &&
+           !zslLexValueGteMin(first->level[0].forward->ele, range))
+    {
+        serverLog(LL_WARNING, "1 score: %f, span: %lu", first->score, span);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+
+    while (first->level[0].forward && offset--) {
+        serverLog(LL_WARNING, "2 offset-- score: %f", first->score);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+
+    update[0] = first;
+
+    /* Current node is the last with score < or <= min. */
+    span += first->level[0].span;
+    first = first->level[0].forward;
+
+    if (first == NULL) return removed;
+
+    serverLog(LL_WARNING, "first_span: %lu, first_score: %f", span, first->score);
+
+    x = zsl->header;
+    unsigned long level_span = 0;
+
+    for (i = zsl->level-1; i > 0; i--) {
+        /*
         while (x->level[i].forward &&
-               !zslLexValueGteMin(x->level[i].forward->ele,range))
+               !zslValueGteMin(x->level[i].forward->score, range))
+        {
+            serverLog(LL_WARNING, "x->level[i].span: %lu", x->level[i].span);
+            level_span += x->level[i].span;
             x = x->level[i].forward;
+        }
+         */
+
+        // we should check the span
+        while (x->level[i].forward) {
+            serverLog(LL_WARNING, "before skip span: %lu, score: %f, level_span: %ld", x->level[i].span, x->score, level_span);
+            if ((level_span + x->level[i].span < span)) {
+            } else {
+                serverLog(LL_WARNING, "break");
+                break;
+            }
+
+            level_span += x->level[i].span;
+            serverLog(LL_WARNING, "after skip span: %lu, score: %f, level_span: %ld", x->level[i].span, x->score, level_span);
+
+            x = x->level[i].forward;
+        }
+
         update[i] = x;
+        serverLog(LL_WARNING, "level: %d, update[i], score: %f", i, x->score);
     }
 
     /* Current node is the last with score < or <= min. */
-    x = x->level[0].forward;
+    x = first;
 
     /* Delete nodes while in range. */
     while (x && zslLexValueLteMax(x->ele,range)) {
