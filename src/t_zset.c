@@ -166,30 +166,14 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
             serverLog(LL_WARNING, "222222222222222222222222");
         }
 
-
-        while (x->level[i].forward)
+        while (x->level[i].forward &&
+               (x->level[i].forward->score < score ||
+                (x->level[i].forward->score == score &&
+                 sdscmp(x->level[i].forward->ele,ele) < 0)))
         {
-            if (x->level[i].forward->score < score) {
-                serverLog(LL_WARNING, "fffffffffffffff");
-            } else {
-                serverLog(LL_WARNING, "kkkkkkkkkkkkkkk");
-                break;
-
-            }
-            if (x->level[i].forward) {
-                double score = x->level[i].forward->score;
-                sds member = x->level[i].forward->ele;
-                serverLog(LL_WARNING, "222 i: %d, score: %f, member: %s, ele: %s", i, score, member, ele);
-            }
-
             rank[i] += x->level[i].span;
-            serverLog(LL_WARNING, "3333333333333");
-
             x = x->level[i].forward;
-            serverLog(LL_WARNING, "55555555");
         }
-
-        serverLog(LL_WARNING, "update");
         update[i] = x;
     }
 

@@ -1048,6 +1048,15 @@ start_server {tags {"zset"}} {
             r zadd zsetf{t} 3 3
             r zadd zsetf{t} 4 4
 
+            # zadd zsetd{t} 1 1 2 2 3 3
+            # zadd zsetf{t} 1 1 3 3 4 4
+
+            set res [r zrange zsetd{t} 0 -1 withscores]
+            puts $res
+
+            set res [r zrange zsetf{t} 0 -1 withscores]
+            puts $res
+
             assert_equal {1 2 2 2 4 4 3 6} [r zunion 2 zsetd{t} zsetf{t} withscores]
             assert_equal {1 2 3 6} [r zinter 2 zsetd{t} zsetf{t} withscores]
             assert_equal 2 [r zintercard 2 zsetd{t} zsetf{t}]
