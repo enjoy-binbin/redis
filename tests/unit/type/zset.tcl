@@ -525,8 +525,6 @@ start_server {tags {"zset"}} {
                 set old_card [r zcard $key]
                 set res [$rd zremrange $key $min $max BYSCORE GET {*}$options]
 
-                set res2 [r zrange $key 0 -1 withscores]
-
                 # Ensure the same quantity before and after.
                 set new_card [r zcard $key]
                 assert {$old_card == $new_card + $removed}
@@ -558,68 +556,39 @@ start_server {tags {"zset"}} {
         test "$range/$range_rev/ZCOUNT basics - $encoding" {
             create_default_zset
 
-            puts "111111111111111111111111"
             # inclusive range
             verify_zrange_response2 r $range zset -inf 2 {a b c} 3
-            puts "aaaaaaaaaaa"
             verify_zrange_response2 r $range zset 0 3 {b c d} 3
-            # zremrange zset 0 3 byscore GET
-            puts "vvvvvvvvvvvvv"
             verify_zrange_response2 r $range zset 3 6 {d e f} 3
-            # zremrange zset 3 6 byscore GET
-            puts "cccccccccccc"
             verify_zrange_response2 r $range zset 4 +inf {e f g} 3
-            puts "dddddddddddd"
-
 
             verify_zrange_response2 r $range_rev zset 2 -inf {c b a} 3
-            puts "eeeeeeeeeee"
             verify_zrange_response2 r $range_rev zset 3 0 {d c b} 3
-            puts "ffffffffffff"
             verify_zrange_response2 r $range_rev zset 6 3 {f e d} 3
-            puts "gggggggggggg"
             verify_zrange_response2 r $range_rev zset +inf 4 {g f e} 3
-            puts "hhhhhhhhhhhhhhhhh"
             assert_equal 3 [r zcount zset 0 3]
 
             # exclusive range
-            puts "222222222222222222222"
-
             verify_zrange_response2 r $range zset (-inf (2 {b} 1
-            # zremrange zset (-inf (2 GET
-
-            puts "33333333333333"
             verify_zrange_response2 r $range zset (0 (3 {b c} 2
-            puts "44444444444444"
             verify_zrange_response2 r $range zset (3 (6 {e f} 2
-            puts "5555555555555555"
             verify_zrange_response2 r $range zset (4 (+inf {f} 1
-            puts "6666666666666666"
             verify_zrange_response2 r $range_rev zset (2 (-inf {b} 1
-            puts "77777777777777"
             verify_zrange_response2 r $range_rev zset (3 (0 {c b} 2
-            puts "8888888888888888"
             verify_zrange_response2 r $range_rev zset (6 (3 {f e} 2
-            puts "9999999999999999"
             verify_zrange_response2 r $range_rev zset (+inf (4 {f} 1
             assert_equal 2 [r zcount zset (0 (3]
 
-            puts "33333333333333"
             # test empty ranges
             r zrem zset a g
 
             # inclusive
             verify_zrange_response2 r $range zset 4 2 {} 0 "zrem zset a g"
-            puts "ggggggggggggggggggg"
             verify_zrange_response2 r $range zset 6 +inf {} 0 "zrem zset a g"
-
-            puts "fffffffffffffff"
-
             verify_zrange_response2 r $range zset -inf -6 {} 0 "zrem zset a g"
             verify_zrange_response2 r $range_rev zset +inf 6 {} 0 "zrem zset a g"
             verify_zrange_response2 r $range_rev zset -6 -inf {} 0 "zrem zset a g"
 
-            puts "4444444444444444"
             # exclusive
             verify_zrange_response2 r $range zset (4 (2 {} 0 "zrem zset a g"
             verify_zrange_response2 r $range zset 2 (2 {} 0 "zrem zset a g"
@@ -629,7 +598,6 @@ start_server {tags {"zset"}} {
             verify_zrange_response2 r $range_rev zset (+inf (6 {} 0 "zrem zset a g"
             verify_zrange_response2 r $range_rev zset (-6 (-inf {} 0 "zrem zset a g"
 
-            puts "55555555555555555"
             # empty inner range
             verify_zrange_response2 r $range zset 2.4 2.6 {} 0 "zrem zset a g"
             verify_zrange_response2 r $range zset (2.4 2.6 {} 0 "zrem zset a g"
@@ -649,41 +617,13 @@ start_server {tags {"zset"}} {
             create_default_zset
 
             verify_zrange_response2 r $range zset 0 10 {b c} 2 "" "LIMIT 0 2"
-            puts "1111111111111111111111"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 0 10 byscore limit 0 2 GET
-
             verify_zrange_response2 r $range zset 0 10 {d e f} 3 "" "LIMIT 2 3"
-            puts "222222222222222"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 0 10 byscore limit 2 3 GET
-
             verify_zrange_response2 r $range zset 0 10 {d e f} 3 "" "LIMIT 2 10"
-            puts "33333333333333"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 0 10 byscore GET LIMIT 2 10
-
             verify_zrange_response2 r $range zset 0 10 {} 0 "" "LIMIT 20 10"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 0 10 byscore GET LIMIT 20 10
-            puts "44444444444444444"
-
             verify_zrange_response2 r $range_rev zset 10 0 {f e} 2 "" "LIMIT 0 2"
-            puts "5555555555555"
-            # zremrange zset 10 0 GET REV LIMIT 10 0 BYSCORE LIMIT 0 2
-
             verify_zrange_response2 r $range_rev zset 10 0 {d c b} 3 "" "LIMIT 2 3"
-            puts "6666666666666666"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 10 0 GET REV BYSCORE LIMIT 2 3
-
             verify_zrange_response2 r $range_rev zset 10 0 {d c b} 3 "" "LIMIT 2 10"
-            # zadd zset -inf a 1 b 2 c 3 d 4 e 5 f +inf g
-            # zremrange zset 10 0 GET REV LIMIT 2 10 byscore
-            puts "777777777777777777777"
-
             verify_zrange_response2 r $range_rev zset 0 10 {} 0 "" "LIMIT 20 10"
-            puts "8888888888888888"
         }
 
         test "$range/$range_rev with LIMIT and WITHSCORES - $encoding" {
@@ -726,63 +666,131 @@ start_server {tags {"zset"}} {
                               0 omega}
         }
 
-    foreach {range range_rev} {ZRANGEBYLEX ZREVRANGEBYLEX ZREMRANGE_BYLEX ZREMRANGE_BYLEX_REV} {
+        # bylex
+        proc verify_zrange_response3 {rd cmd key min max expected_response removed {extra_cmd ""} {options ""}} {}
+        proc verify_zrange_response4 {rd cmd key min max expected_response removed {extra_cmd ""} {options ""}} {
+
+            if {$cmd == "ZRANGEBYLEX"} {
+                set res [$rd zrangebylex $key $min $max {*}$options]
+            } elseif {$cmd == "ZREMRANGE_BYLEX"} {
+                if {$extra_cmd != ""} {
+                    $rd {*}$extra_cmd
+                }
+                set old_card [r zcard $key]
+                set res [$rd zremrange $key $min $max BYLEX GET {*}$options]
+
+                # Ensure the same quantity before and after.
+                set new_card [r zcard $key]
+
+                #puts "$cmd, old_card: $old_card, new_card: $new_card, removed: $removed"
+                assert {$old_card == $new_card + $removed}
+
+                r zadd $key 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+
+            } elseif {$cmd == "ZREVRANGEBYLEX"} {
+                set res [$rd zrevrangebylex $key $min $max {*}$options]
+            } elseif {$cmd == "ZREMRANGE_BYLEX_REV"} {
+                if {$extra_cmd != ""} {
+                    $rd {*}$extra_cmd
+                }
+                set old_card [r zcard $key]
+
+                set tmp [$rd zrange $key 0 -1 withscores]
+                puts $tmp
+
+                set res [$rd zremrange $key $min $max BYLEX GET REV {*}$options]
+
+                set tmp [$rd zrange $key 0 -1 withscores]
+                puts $tmp
+
+                # Ensure the same quantity before and after.
+                set new_card [r zcard $key]
+
+                puts "$cmd, old_card: $old_card, new_card: $new_card, removed: $removed"
+                assert {$old_card == $new_card + $removed}
+
+                r zadd $key 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            }
+
+            # ZREMRANGE with GET option response is consistent with ZRANGE.
+            assert_equal $res $expected_response
+        }
+
+    # todo zbb
+    foreach {range range_rev} {ZREMRANGE_BYLEX ZREMRANGE_BYLEX_REV} {
         test "$range/$range_rev/ZLEXCOUNT basics - $encoding" {
             create_default_lex_zset
 
+            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
+            # zrangebylex zset - [cool
+
             # inclusive range
             assert_equal {alpha bar cool} [r zrangebylex zset - \[cool]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "1111111111111"
+            #verify_zrange_response3 r $range zset - \[cool {alpha bar cool} 3
 
             assert_equal {bar cool down} [r zrangebylex zset \[bar \[down]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "222222222222222"
-
+            #verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
 
             assert_equal {great hill omega} [r zrangebylex zset \[g +]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "3333333333333"
-
+            #verify_zrange_response3 r $range zset \[g + {great hill omega} 3
 
             assert_equal {cool bar alpha} [r zrevrangebylex zset \[cool -]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "444444444444444"
+            #verify_zrange_response3 r $range_rev zset \[cool - {cool bar alpha} 3
 
-
+            puts "666666666666666"
             assert_equal {down cool bar} [r zrevrangebylex zset \[down \[bar]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "55555555555555"
 
+            # zremrange zset [down [bar REV GET BYLEX
+            verify_zrange_response3 r $range_rev zset \[down \[bar {down cool bar} 3
+
+            puts "666666666666666"
+            #exit 1
 
             assert_equal {omega hill great foo elephant down} [r zrevrangebylex zset + \[d]
-            # zadd zset 0 alpha 0 bar 0 cool 0 down 0 elephant 0 foo 0 great 0 hill 0 omega
-            # zrangebylex zset - [cool
-            puts "66666666666666"
+            # zremrange zset + \[d REV GET
+            verify_zrange_response3 r $range_rev zset + \[d {omega hill great foo elephant down} 3
+            puts "77777777777777777"
+
+
 
 
             assert_equal 3 [r zlexcount zset \[ele \[h]
 
             # exclusive range
             assert_equal {alpha bar} [r zrangebylex zset - (cool]
+            verify_zrange_response3 r $range zset - (cool {alpha bar} 2
+            puts "55555555555555"
+
+
             assert_equal {cool} [r zrangebylex zset (bar (down]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
+
             assert_equal {hill omega} [r zrangebylex zset (great +]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
+
             assert_equal {bar alpha} [r zrevrangebylex zset (cool -]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
+
             assert_equal {cool} [r zrevrangebylex zset (down (bar]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
+
             assert_equal {omega hill} [r zrevrangebylex zset + (great]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
+
             assert_equal 2 [r zlexcount zset (ele (great]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
 
             # inclusive and exclusive
             assert_equal {} [r zrangebylex zset (az (b]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
             assert_equal {} [r zrangebylex zset (z +]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
             assert_equal {} [r zrangebylex zset - \[aaaa]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
             assert_equal {} [r zrevrangebylex zset \[elez \[elex]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
             assert_equal {} [r zrevrangebylex zset (hill (omega]
+            verify_zrange_response3 r $range zset \[bar \[down {bar cool down} 3
         }
     }
 
@@ -801,7 +809,7 @@ start_server {tags {"zset"}} {
             assert_equal 5 [r zlexcount zset - (foo]
             assert_equal 1 [r zlexcount zset (maxstring +]
         }
-
+        #todo
         test "ZRANGEBYSLEX with LIMIT - $encoding" {
             create_default_lex_zset
             assert_equal {alpha bar} [r zrangebylex zset - \[cool LIMIT 0 2]
@@ -814,7 +822,7 @@ start_server {tags {"zset"}} {
             assert_equal {omega hill great foo elephant} [r zrevrangebylex zset + \[d LIMIT 0 5]
             assert_equal {omega hill great foo} [r zrevrangebylex zset + \[d LIMIT 0 4]
         }
-
+        #todo
         test "ZRANGEBYLEX with invalid lex range specifiers - $encoding" {
             assert_error "*not*string*" {r zrangebylex fooz foo bar}
             assert_error "*not*string*" {r zrangebylex fooz \[foo bar}
@@ -849,6 +857,7 @@ start_server {tags {"zset"}} {
             #assert_equal 1 [r zcard zset]
 
             # BYSCORE
+            # zadd zset 1 a 2 b 3 c 4 d 5 e
             create_zset zset {1 a 2 b 3 c 4 d 5 e}
             assert_equal 1 [r zremrange zset 1.5 3 byscore limit 0 1]
             assert_equal 1 [r zremrange zset 1.5 3 byscore limit 0 2]
@@ -949,24 +958,17 @@ start_server {tags {"zset"}} {
                 }
             }
 
-            puts "$cmd 1111111111111111"
             # inner range
             assert_equal 3 [remrange_byrank $cmd 1 3]
-            puts "$cmd 22222222"
             assert_equal {a e} [r zrange zset 0 -1]
-            puts "$cmd 333333333333333"
 
             # start underflow
             assert_equal 1 [remrange_byrank $cmd -10 0]
-            puts "$cmd 44444444444"
             assert_equal {b c d e} [r zrange zset 0 -1]
-            puts "$cmd 5555555555555"
 
             # start overflow
             assert_equal 0 [remrange_byrank $cmd 10 -1]
-            puts "$cmd 66666666666"
             assert_equal {a b c d e} [r zrange zset 0 -1]
-            puts "$cmd 7777777777777"
 
             # end underflow
             assert_equal 0 [remrange_byrank $cmd 0 -10]
@@ -1041,21 +1043,8 @@ start_server {tags {"zset"}} {
 
         test "ZUNION/ZINTER/ZINTERCARD/ZDIFF with integer members - $encoding" {
             r del zsetd{t} zsetf{t}
-            r zadd zsetd{t} 1 1
-            r zadd zsetd{t} 2 2
-            r zadd zsetd{t} 3 3
-            r zadd zsetf{t} 1 1
-            r zadd zsetf{t} 3 3
-            r zadd zsetf{t} 4 4
-
-            # zadd zsetd{t} 1 1 2 2 3 3
-            # zadd zsetf{t} 1 1 3 3 4 4
-
-            set res [r zrange zsetd{t} 0 -1 withscores]
-            puts $res
-
-            set res [r zrange zsetf{t} 0 -1 withscores]
-            puts $res
+            r zadd zsetd{t} 1 1 2 2 3 3
+            r zadd zsetf{t} 1 1 3 3 4 4
 
             assert_equal {1 2 2 2 4 4 3 6} [r zunion 2 zsetd{t} zsetf{t} withscores]
             assert_equal {1 2 3 6} [r zinter 2 zsetd{t} zsetf{t} withscores]

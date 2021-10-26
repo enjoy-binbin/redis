@@ -138,8 +138,6 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
 
     serverAssert(!isnan(score));
 
-    serverLog(LL_WARNING, "1111111111111111");
-
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         /* store rank that is crossed to reach the insert position */
@@ -422,6 +420,89 @@ zskiplistNode *zslLastInRange(zskiplist *zsl, zrangespec *range) {
  * sorted set, in order to remove the elements from the hash table too. */
 unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range, dict *dict, long offset, long limit) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    unsigned long rank[ZSKIPLIST_MAXLEVEL];
+    unsigned long removed = 0;
+    int i;
+
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        // todo
+        rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+        while (x->level[i].forward &&
+               !zslValueGteMin(x->level[i].forward->score, range))
+        {
+            serverLog(LL_WARNING, "span: %lu", x->level[i].span);
+            rank[i] += x->level[i].span;
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+
+    for (i = zsl->level-1; i>=0; i--) {
+        serverLog(LL_WARNING, "i: %d, rank: %lu", i, rank[i]);
+    }
+
+    if (x == NULL) return removed;
+
+    /* Current node is the last with score < or <= min. */
+    //rank[0] += x->level[0].span;
+    //x = x->level[0].forward;
+
+    if (x == NULL) return removed;
+
+    while (offset-- && x->level[0].forward && zslValueLteMax(x->level[0].forward->score, range)) {
+        rank[0] += x->level[0].span;
+        x = x->level[0].forward;
+    }
+
+    serverLog(LL_WARNING, "i = 0 rank: %lu", rank[0]);
+
+    update[0] = x;
+
+    // rank[0] += x->level[0].span;
+    // x = x->level[0].forward;
+
+    // if (x == NULL || !zslValueLteMax(x->score, range)) return removed;
+    if (x == NULL) return removed;
+
+
+    serverLog(LL_WARNING, "fffffffffffffff");
+
+    // take care the other levels
+    for (i = zsl->level-1; i > 0; i--) {
+        x = update[i];
+        while (x && x->level[i].forward &&
+                rank[i] + x->level[i].span <= rank[0])
+        {
+            serverLog(LL_WARNING, "i: %d, rank[i]: %lu, span: %lu", i, rank[i], x->level[i].span);
+            rank[i] += x->level[i].span;
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+
+    serverLog(LL_WARNING, "ggggggggggggg");
+    x = update[0]->level[0].forward;
+
+    /* Delete nodes while in range. */
+    while (x && zslValueLteMax(x->score, range)) {
+        zskiplistNode *next = x->level[0].forward;
+        zslDeleteNode(zsl,x,update);
+        dictDelete(dict,x->ele);
+
+        serverLog(LL_WARNING, "delete: %s", x->ele);
+
+        zslFreeNode(x); /* Here is where x->ele is actually released. */
+        removed++;
+        /* We stop traversing after reaching the limit. */
+        if (limit > 0 && removed >= (unsigned long)limit) break;
+        x = next;
+    }
+    return removed;
+}
+
+unsigned long zslDeleteRangeByScore2(zskiplist *zsl, zrangespec *range, dict *dict, long offset, long limit) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned long removed = 0;
     int i;
 
@@ -430,8 +511,14 @@ unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range, dict *dic
 
     serverLog(LL_WARNING, "offset: %ld, limit: %ld", offset, limit);
 
+    // out of range
+
+
     /* We take care the 0 level first. */
     zskiplistNode *first = zsl->header;
+
+//    for ()
+
     while (first->level[0].forward &&
            !zslValueGteMin(first->level[0].forward->score, range))
     {
@@ -673,16 +760,50 @@ unsigned long zslDeleteRangeByLexRev(zskiplist *zsl, zlexrangespec *range, dict 
     zskiplistNode *first, *last;
     unsigned long removed = 0;
     int i;
-    UNUSED(offset);
+
+    /* If everything is out of range, return early. */
+    if (!zslIsInLexRange(zsl,range)) return removed;
+
+    /*
+    x = zsl->header;
+    unsigned long span = 0;
+    serverLog(LL_WARNING, "offset: %ld, limit: %ld", offset, limit);
+
+     We take care the 0 level first.
+    zskiplistNode *first = zsl->header;
+    while (first->level[0].forward &&
+            zslLexValueLteMax(first->level[0].forward->ele, range))
+    {
+        serverLog(LL_WARNING, "1 score: %f, span: %lu", first->score, span);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+
+    while (first->level[0].forward && offset--) {
+        serverLog(LL_WARNING, "2 offset-- score: %f", first->score);
+        span += first->level[0].span;
+        first = first->level[0].forward;
+    }
+    update[0] = first;
+    */
+
 
     last = zslLastInLexRange(zsl, range);
     if (last == NULL) return removed;
 
+    while (last && last->backward && offset--) {
+        if (!zslLexValueGteMin(last->ele, range)) break;
+        last = last->backward;
+    }
+
     first = last;
-    while (first && first->backward && --limit) {
+
+//    limit--;
+    while (first && first->backward && limit--) {
         if (!zslLexValueGteMin(first->ele, range)) break;
         first = first->backward;
     }
+    serverLog(LL_WARNING, "last: %s, first: %s", last->ele, first->ele);
 
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
@@ -699,11 +820,15 @@ unsigned long zslDeleteRangeByLexRev(zskiplist *zsl, zlexrangespec *range, dict 
     /* Delete nodes while in range. */
     x = first;
     int is_last;
+
     while (x) {
         zskiplistNode *next;
         next = x->level[0].forward;
         is_last = x == last;
         zslDeleteNode(zsl,x,update);
+
+        serverLog(LL_WARNING, "delete: %s", x->ele);
+
         dictDelete(dict,x->ele);
         zslFreeNode(x); /* Here is where x->ele is actually released. */
         removed++;
@@ -1703,8 +1828,6 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
         *out_flags = ZADD_OUT_NAN;
         return 0;
     }
-
-    serverLog(LL_WARNING, "encoding: %d", zobj->encoding);
 
     /* Update the sorted set according to its encoding. */
     if (zobj->encoding == OBJ_ENCODING_LISTPACK) {
