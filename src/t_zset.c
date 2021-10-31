@@ -424,10 +424,13 @@ unsigned long zslDeleteRangeByScore(zskiplist *zsl, zrangespec *range, dict *dic
     unsigned long removed = 0;
     int i;
 
+    /* If everything is out of range, return early. */
+    if (!zslIsInRange(zsl, range)) return removed;
+
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         // todo
-        rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+        rank[i] = i == (zsl->level - 1) ? 0 : rank[i+1];
         while (x->level[i].forward &&
                !zslValueGteMin(x->level[i].forward->score, range))
         {
@@ -609,9 +612,9 @@ unsigned long zslDeleteRangeByScoreRev(zskiplist *zsl, zrangespec *range, dict *
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     zskiplistNode *last;
     zskiplistNode *first;
+
     unsigned long removed = 0;
     int i;
-
 
     // 先找到范围里的最后一个元素
     // 然后往前走 count 步
@@ -624,6 +627,8 @@ unsigned long zslDeleteRangeByScoreRev(zskiplist *zsl, zrangespec *range, dict *
         if (!zslValueGteMin(last->backward->score, range)) break;
         last = last->backward;
     }
+
+    if (offset > 0) return removed;
 
     first = last;
 
