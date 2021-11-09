@@ -29,9 +29,11 @@
  */
 
 #include "server.h"
+#include "util.h"
 #include "sha1.h"   /* SHA1 is used for DEBUG DIGEST */
 #include "crc64.h"
 #include "bio.h"
+#include "quicklist.h"
 
 #include <arpa/inet.h>
 #include <signal.h>
@@ -162,7 +164,7 @@ void xorObjectDigest(redisDb *db, robj *keyobj, unsigned char *digest, robj *o) 
     } else if (o->type == OBJ_ZSET) {
         unsigned char eledigest[20];
 
-        if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        if (o->encoding == OBJ_ENCODING_LISTPACK) {
             unsigned char *zl = o->ptr;
             unsigned char *eptr, *sptr;
             unsigned char *vstr;
@@ -170,13 +172,13 @@ void xorObjectDigest(redisDb *db, robj *keyobj, unsigned char *digest, robj *o) 
             long long vll;
             double score;
 
-            eptr = ziplistIndex(zl,0);
+            eptr = lpSeek(zl,0);
             serverAssert(eptr != NULL);
-            sptr = ziplistNext(zl,eptr);
+            sptr = lpNext(zl,eptr);
             serverAssert(sptr != NULL);
 
             while (eptr != NULL) {
-                serverAssert(ziplistGet(eptr,&vstr,&vlen,&vll));
+                vstr = lpGetValue(eptr,&vlen,&vll);
                 score = zzlGetScore(sptr);
 
                 memset(eledigest,0,20);
@@ -459,6 +461,9 @@ void debugCommand(client *c) {
 "    Setting it to 0 disables expiring keys in background when they are not",
 "    accessed (otherwise the Redis behavior). Setting it to 1 reenables back the",
 "    default.",
+"QUICKLIST-PACKED-THRESHOLD <size>",
+"    Sets the threshold for elements to be inserted as plain vs packed nodes",
+"    Default value is 1GB, allows values up to 4GB",
 "SET-SKIP-CHECKSUM-VALIDATION <0|1>",
 "    Enables or disables checksum checks for RDB files and RESTORE's payload.",
 "SLEEP <seconds>",
@@ -469,6 +474,13 @@ void debugCommand(client *c) {
 "    Return the size of different Redis core C structures.",
 "ZIPLIST <key>",
 "    Show low level info about the ziplist encoding of <key>.",
+"QUICKLIST <key> [<0|1>]",
+"    Show low level info about the quicklist encoding of <key>."
+"    The optional argument (0 by default) sets the level of detail",
+"CLIENT-EVICTION",
+"    Show low level client eviction pools info (maxmemory-clients).",
+"PAUSE-CRON <0|1>",
+"    Stop periodic cron job processing.",
 NULL
         };
         addReplyHelp(c, help);
@@ -648,6 +660,21 @@ NULL
             ziplistRepr(o->ptr);
             addReplyStatus(c,"Ziplist structure printed on stdout");
         }
+    } else if (!strcasecmp(c->argv[1]->ptr,"quicklist") && (c->argc == 3 || c->argc == 4)) {
+        robj *o;
+
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nokeyerr))
+            == NULL) return;
+
+        int full = 0;
+        if (c->argc == 4)
+            full = atoi(c->argv[3]->ptr);
+        if (o->encoding != OBJ_ENCODING_QUICKLIST) {
+            addReplyError(c,"Not a quicklist encoded object.");
+        } else {
+            quicklistRepr(o->ptr, full);
+            addReplyStatus(c,"Quicklist structure printed on stdout");
+        }
     } else if (!strcasecmp(c->argv[1]->ptr,"populate") &&
                c->argc >= 3 && c->argc <= 5) {
         long keys, j;
@@ -719,7 +746,7 @@ NULL
         } else if (!strcasecmp(name,"integer")) {
             addReplyLongLong(c,12345);
         } else if (!strcasecmp(name,"double")) {
-            addReplyDouble(c,3.14159265359);
+            addReplyDouble(c,3.141);
         } else if (!strcasecmp(name,"bignum")) {
             addReplyBigNum(c,"1234567999999999999999999999999999999",37);
         } else if (!strcasecmp(name,"null")) {
@@ -778,6 +805,16 @@ NULL
     {
         server.active_expire_enabled = atoi(c->argv[2]->ptr);
         addReply(c,shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr,"quicklist-packed-threshold") &&
+               c->argc == 3)
+    {
+        int memerr;
+        unsigned long long sz = memtoull((const char *)c->argv[2]->ptr, &memerr);
+        if (memerr || !quicklistisSetPackedThreshold(sz)) {
+            addReplyError(c, "argument must be a memory value bigger then 1 and smaller than 4gb");
+        } else {
+            addReply(c,shared.ok);
+        }
     } else if (!strcasecmp(c->argv[1]->ptr,"set-skip-checksum-validation") &&
                c->argc == 3)
     {
@@ -883,6 +920,23 @@ NULL
             addReplyError(c, "CONFIG-REWRITE-FORCE-ALL failed");
         else
             addReply(c, shared.ok);
+    } else if(!strcasecmp(c->argv[1]->ptr,"client-eviction") && c->argc == 2) {
+        sds bucket_info = sdsempty();
+        for (int j = 0; j < CLIENT_MEM_USAGE_BUCKETS; j++) {
+            if (j == 0)
+                bucket_info = sdscatprintf(bucket_info, "bucket          0");
+            else
+                bucket_info = sdscatprintf(bucket_info, "bucket %10zu", (size_t)1<<(j-1+CLIENT_MEM_USAGE_BUCKET_MIN_LOG));
+            if (j == CLIENT_MEM_USAGE_BUCKETS-1)
+                bucket_info = sdscatprintf(bucket_info, "+            : ");
+            else
+                bucket_info = sdscatprintf(bucket_info, " - %10zu: ", ((size_t)1<<(j+CLIENT_MEM_USAGE_BUCKET_MIN_LOG))-1);
+            bucket_info = sdscatprintf(bucket_info, "tot-mem: %10zu, clients: %lu\n",
+                server.client_mem_usage_buckets[j].mem_usage_sum,
+                server.client_mem_usage_buckets[j].clients->len);
+        }
+        addReplyVerbatim(c,bucket_info,sdslen(bucket_info),"txt");
+        sdsfree(bucket_info);
 #ifdef USE_JEMALLOC
     } else if(!strcasecmp(c->argv[1]->ptr,"mallctl") && c->argc >= 3) {
         mallctl_int(c, c->argv+2, c->argc-2);
@@ -891,6 +945,10 @@ NULL
         mallctl_string(c, c->argv+2, c->argc-2);
         return;
 #endif
+    } else if (!strcasecmp(c->argv[1]->ptr,"pause-cron") && c->argc == 3)
+    {
+        server.pause_cron = atoi(c->argv[2]->ptr);
+        addReply(c,shared.ok);
     } else {
         addReplySubcommandSyntaxError(c);
         return;
@@ -1982,43 +2040,33 @@ void watchdogScheduleSignal(int period) {
     it.it_interval.tv_usec = 0;
     setitimer(ITIMER_REAL, &it, NULL);
 }
+void applyWatchdogPeriod() {
+    struct sigaction act;
 
-/* Enable the software watchdog with the specified period in milliseconds. */
-void enableWatchdog(int period) {
-    int min_period;
-
+    /* Disable watchdog when period is 0 */
     if (server.watchdog_period == 0) {
-        struct sigaction act;
+        watchdogScheduleSignal(0); /* Stop the current timer. */
 
-        /* Watchdog was actually disabled, so we have to setup the signal
-         * handler. */
+        /* Set the signal handler to SIG_IGN, this will also remove pending
+         * signals from the queue. */
+        sigemptyset(&act.sa_mask);
+        act.sa_flags = 0;
+        act.sa_handler = SIG_IGN;
+        sigaction(SIGALRM, &act, NULL);
+    } else {
+        /* Setup the signal handler. */
         sigemptyset(&act.sa_mask);
         act.sa_flags = SA_SIGINFO;
         act.sa_sigaction = watchdogSignalHandler;
         sigaction(SIGALRM, &act, NULL);
+
+        /* If the configured period is smaller than twice the timer period, it is
+         * too short for the software watchdog to work reliably. Fix it now
+         * if needed. */
+        int min_period = (1000/server.hz)*2;
+        if (server.watchdog_period < min_period) server.watchdog_period = min_period;
+        watchdogScheduleSignal(server.watchdog_period); /* Adjust the current timer. */
     }
-    /* If the configured period is smaller than twice the timer period, it is
-     * too short for the software watchdog to work reliably. Fix it now
-     * if needed. */
-    min_period = (1000/server.hz)*2;
-    if (period < min_period) period = min_period;
-    watchdogScheduleSignal(period); /* Adjust the current timer. */
-    server.watchdog_period = period;
-}
-
-/* Disable the software watchdog. */
-void disableWatchdog(void) {
-    struct sigaction act;
-    if (server.watchdog_period == 0) return; /* Already disabled. */
-    watchdogScheduleSignal(0); /* Stop the current timer. */
-
-    /* Set the signal handler to SIG_IGN, this will also remove pending
-     * signals from the queue. */
-    sigemptyset(&act.sa_mask);
-    act.sa_flags = 0;
-    act.sa_handler = SIG_IGN;
-    sigaction(SIGALRM, &act, NULL);
-    server.watchdog_period = 0;
 }
 
 /* Positive input is sleep time in microseconds. Negative input is fractions
