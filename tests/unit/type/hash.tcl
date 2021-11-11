@@ -289,29 +289,46 @@ start_server {tags {"hash"}} {
         set _ $rv
     } {0 newval1 1 0 newval2 1 1 1}
 
+    test "HSETNX against wrong type" {
+        r set foo bar
+        assert_error "*WRONGTYPE*" {r hsetnx foo k1 v1}
+        assert_error "*WRONGTYPE*" {r hsetnx foo k1 v1 k2 v2}
+    }
+
     test {HSETNX target key missing - small hash} {
-        r hsetnx smallhash __123123123__ foo
+        assert_equal 1 [r hsetnx smallhash __123123123__ foo]
         r hget smallhash __123123123__
     } {foo}
 
     test {HSETNX target key exists - small hash} {
-        r hsetnx smallhash __123123123__ bar
+        assert_equal 0 [r hsetnx smallhash __123123123__ bar]
         set result [r hget smallhash __123123123__]
         r hdel smallhash __123123123__
         set _ $result
     } {foo}
 
     test {HSETNX target key missing - big hash} {
-        r hsetnx bighash __123123123__ foo
+        assert_equal 1 [r hsetnx bighash __123123123__ foo]
         r hget bighash __123123123__
     } {foo}
 
     test {HSETNX target key exists - big hash} {
-        r hsetnx bighash __123123123__ bar
+        assert_equal 0 [r hsetnx bighash __123123123__ bar]
         set result [r hget bighash __123123123__]
         r hdel bighash __123123123__
         set _ $result
     } {foo}
+
+    test "HSETNX with multi fields" {
+        assert_equal 3 [r hsetnx myhash k1 v1 k2 v2 k3 v3]
+        assert_equal 0 [r hsetnx myhash k1 v1 k2 v2 k3 v3]
+        assert_equal 1 [r hsetnx myhash k1 v1 k2 v2 k3 v3 k4 v4]
+        assert_equal {v1 v2 v3 v4 {}} [r hmget myhash k1 k2 k3 k4 k5]
+
+        assert_equal 2 [r hdel myhash k1 k2]
+        assert_equal 2 [r hsetnx myhash k1 v1 k2 v2 k3 v3 k4 v4]
+        assert_equal {v1 v2 v3 v4 {} {}} [r hmget myhash k1 k2 k3 k4 k5 k6]
+    }
 
     test {HMSET wrong number of args} {
         catch {r hmset smallhash key1 val1 key2} err
