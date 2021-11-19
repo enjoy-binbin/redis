@@ -834,6 +834,16 @@ start_server {tags {"zset"}} {
             assert_equal {b 2 c 3} [r zinter 2 zseta{t} zsetb{t} aggregate max withscores]
         }
 
+        test "ZUNIONSTORE with AGGREGATE MUL - $encoding" {
+            assert_equal 4 [r zunionstore zsetc{t} 2 zseta{t} zsetb{t} AGGREGATE MUL]
+            assert_equal {a 1 b 2 d 3 c 6} [r zrange zsetc{t} 0 -1 withscores]
+        }
+
+        test "ZUNION/ZINTER with AGGREGATE MUL - $encoding" {
+            assert_equal {a 1 b 2 d 3 c 6} [r zunion 2 zseta{t} zsetb{t} AGGREGATE MUL WITHSCORES]
+            assert_equal {b 2 c 6} [r zinter 2 zseta{t} zsetb{t} AGGREGATE MUL WITHSCORES]
+        }
+
         test "ZINTERSTORE basics - $encoding" {
             assert_equal 2 [r zinterstore zsetc{t} 2 zseta{t} zsetb{t}]
             assert_equal {b 3 c 5} [r zrange zsetc{t} 0 -1 withscores]
@@ -893,38 +903,88 @@ start_server {tags {"zset"}} {
             assert_equal {b 2 c 3} [r zrange zsetc{t} 0 -1 withscores]
         }
 
-        foreach cmd {ZUNIONSTORE ZINTERSTORE} {
-            test "$cmd with +inf/-inf scores - $encoding" {
+        test "ZINTERSTORE with AGGREGATE MUL - $encoding" {
+            assert_equal 2 [r zinterstore zsetc{t} 2 zseta{t} zsetb{t} AGGREGATE MUL]
+            assert_equal {b 2 c 6} [r zrange zsetc{t} 0 -1 WITHSCORES]
+        }
+
+        foreach {cmd cmdstore} {ZUNION ZUNIONSTORE ZINTER ZINTERSTORE} {
+            test "$cmd/$cmdstore with +inf/-inf scores with AGGREGATE SUM - $encoding" {
                 r del zsetinf1{t} zsetinf2{t}
 
                 r zadd zsetinf1{t} +inf key
                 r zadd zsetinf2{t} +inf key
-                r $cmd zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
+                assert_equal {key inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
                 assert_equal inf [r zscore zsetinf3{t} key]
 
                 r zadd zsetinf1{t} -inf key
                 r zadd zsetinf2{t} +inf key
-                r $cmd zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
+                assert_equal {key 0} [r $cmd 2 zsetinf1{t} zsetinf2{t} WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
                 assert_equal 0 [r zscore zsetinf3{t} key]
 
                 r zadd zsetinf1{t} +inf key
                 r zadd zsetinf2{t} -inf key
-                r $cmd zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
+                assert_equal {key 0} [r $cmd 2 zsetinf1{t} zsetinf2{t} WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
                 assert_equal 0 [r zscore zsetinf3{t} key]
 
                 r zadd zsetinf1{t} -inf key
                 r zadd zsetinf2{t} -inf key
-                r $cmd zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
+                assert_equal {key -inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t}
                 assert_equal -inf [r zscore zsetinf3{t} key]
             }
 
-            test "$cmd with NaN weights - $encoding" {
+            test "$cmd/$cmdstore with +inf/-inf scores with AGGREGATE MUL - $encoding" {
+                r del zsetinf1{t} zsetinf2{t}
+
+                r zadd zsetinf1{t} 0 key
+                r zadd zsetinf2{t} +inf key
+                assert_equal {key 0} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal 0 [r zscore zsetinf3{t} key]
+
+                r zadd zsetinf1{t} -inf key
+                r zadd zsetinf2{t} 0 key
+                assert_equal {key 0} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal 0 [r zscore zsetinf3{t} key]
+
+                r zadd zsetinf1{t} +inf key
+                r zadd zsetinf2{t} +inf key
+                assert_equal {key inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal inf [r zscore zsetinf3{t} key]
+
+                r zadd zsetinf1{t} -inf key
+                r zadd zsetinf2{t} +inf key
+                assert_equal {key -inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal -inf [r zscore zsetinf3{t} key]
+
+                r zadd zsetinf1{t} +inf key
+                r zadd zsetinf2{t} -inf key
+                assert_equal {key -inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal -inf [r zscore zsetinf3{t} key]
+
+                r zadd zsetinf1{t} -inf key
+                r zadd zsetinf2{t} -inf key
+                assert_equal {key inf} [r $cmd 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL WITHSCORES]
+                r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} AGGREGATE MUL
+                assert_equal inf [r zscore zsetinf3{t} key]
+            }
+
+            test "$cmd/$cmdstore with NaN weights - $encoding" {
                 r del zsetinf1{t} zsetinf2{t}
 
                 r zadd zsetinf1{t} 1.0 key
                 r zadd zsetinf2{t} 1.0 key
+                assert_error "*weight*not*float*" {r $cmd 2 zsetinf1{t} zsetinf2{t} weights nan nan}
                 assert_error "*weight*not*float*" {
-                    r $cmd zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} weights nan nan
+                    r $cmdstore zsetinf3{t} 2 zsetinf1{t} zsetinf2{t} weights nan nan
                 }
             }
         }
