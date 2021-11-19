@@ -2586,7 +2586,6 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
         int remaining = c->argc - j;
 
         while (remaining) {
-            char *opt = c->argv[j]->ptr;
             if (op != SET_OP_DIFF && !cardinality_only &&
                 !has_weights && remaining >= (setnum + 1) &&
                 !strcasecmp(c->argv[j]->ptr,"weights"))
