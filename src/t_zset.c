@@ -2538,7 +2538,8 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
     zskiplistNode *znode;
     int withscores = 0;
     unsigned long cardinality = 0;
-    long limit = 0; /* Stop searching after reaching the limit. 0 means unlimited. */
+    long limit = -1; /* Stop searching after reaching the limit. 0 means unlimited. */
+    int has_weights = 0;
 
     /* expect setnum input keys to be given */
     if ((getLongFromObjectOrReply(c, c->argv[numkeysIndex], &setnum, NULL) != C_OK))
@@ -2585,8 +2586,9 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
         int remaining = c->argc - j;
 
         while (remaining) {
+            char *opt = c->argv[j]->ptr;
             if (op != SET_OP_DIFF && !cardinality_only &&
-                remaining >= (setnum + 1) &&
+                !has_weights && remaining >= (setnum + 1) &&
                 !strcasecmp(c->argv[j]->ptr,"weights"))
             {
                 j++; remaining--;
@@ -2598,6 +2600,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                         return;
                     }
                 }
+                has_weights = 1;
             } else if (op != SET_OP_DIFF && !cardinality_only &&
                        aggregate == REDIS_AGGR_NONE && remaining >= 2 &&
                        !strcasecmp(c->argv[j]->ptr,"aggregate"))
@@ -2617,13 +2620,13 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                     return;
                 }
                 j++; remaining--;
-            } else if (remaining >= 1 &&
+            } else if (!withscores && remaining >= 1 &&
                        !dstkey && !cardinality_only &&
                        !strcasecmp(c->argv[j]->ptr,"withscores"))
             {
                 j++; remaining--;
                 withscores = 1;
-            } else if (cardinality_only && remaining >= 2 &&
+            } else if (limit == -1 && cardinality_only && remaining >= 2 &&
                        !strcasecmp(c->argv[j]->ptr, "limit"))
             {
                 j++; remaining--;
@@ -2642,7 +2645,9 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
         }
     }
 
+    /* Use defaults if not overridden by arguments. */
     if (aggregate == REDIS_AGGR_NONE) aggregate = REDIS_AGGR_SUM;
+    if (limit == -1) limit = 0;
 
     if (op != SET_OP_DIFF) {
         /* sort sets from the smallest to largest, this will improve our
