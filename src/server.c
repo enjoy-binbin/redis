@@ -6909,6 +6909,7 @@ void monitorCommand(client *c) {
     if (c->flags & CLIENT_SLAVE) return;
 
     c->flags |= (CLIENT_SLAVE|CLIENT_MONITOR);
+//    c->flags |= CLIENT_MONITOR_SELECTED;
     listAddNodeTail(server.monitors,c);
     addReply(c,shared.ok);
 }

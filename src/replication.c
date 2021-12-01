@@ -574,6 +574,10 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
     listRewind(monitors,&li);
     while((ln = listNext(&li))) {
         client *monitor = ln->value;
+        if ((monitor->flags & CLIENT_MONITOR_SELECTED) && monitor->db->id != dictid) {
+            //
+            continue;
+        }
         addReply(monitor,cmdobj);
         updateClientMemUsage(c);
     }
