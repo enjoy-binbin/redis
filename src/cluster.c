@@ -948,6 +948,7 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     node->numslaves = 0;
     node->slaves = NULL;
     node->slaveof = NULL;
+    node->may_be_master = NULL;
     node->ping_sent = node->pong_received = 0;
     node->data_received = 0;
     node->fail_time = 0;
@@ -2367,6 +2368,33 @@ int clusterProcessPacket(clusterLink *link) {
          *    need to update our configuration. */
         if (sender && nodeIsMaster(sender) && dirty_slots)
             clusterUpdateSlotsConfigWith(sender,senderConfigEpoch,hdr->myslots);
+
+        /* We check to see if my own has a new master after SETSLOT NODE.
+         * If a master lost its last slot due to migration, it may become a
+         * replica, see above clusterUpdateSlotsConfigWith.
+         *
+         * Imagine the following sequence:
+         * 1. SETSLOT slot NODE new_owner (sender)
+         * 2. new_owner sending a PONG packet
+         * 3. SETSLOT slot NODE old_owner (myself)
+         *
+         * If the third step is faster than the second, after the SETSLOT,
+         * myself will have the same view of slots as sender. So the dirty_slots
+         * check above will fail. */
+        if (sender && nodeIsMaster(sender) && !dirty_slots) {
+            if (sender == myself->may_be_master) {
+                if (myself->numslots == 0 && server.cluster_allow_replica_migration) {
+                    serverLog(LL_WARNING,
+                              "Met my new master node. Reconfiguring myself "
+                              "as a replica of %.40s", sender->name);
+                    clusterSetMaster(sender_master);
+                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+                                         CLUSTER_TODO_UPDATE_STATE|
+                                         CLUSTER_TODO_FSYNC_CONFIG);
+                }
+                myself->may_be_master = NULL;
+            }
+        }
 
         /* 2) We also check for the reverse condition, that is, the sender
          *    claims to serve slots we know are served by a master with a
@@ -5393,6 +5421,7 @@ NULL
             }
             /* If this hash slot was served by 'myself' before to switch
              * make sure there are no longer local keys for this hash slot. */
+            clusterNode *may_be_master = NULL;
             if (server.cluster->slots[slot] == myself && n != myself) {
                 if (countKeysInSlot(slot) != 0) {
                     addReplyErrorFormat(c,
@@ -5400,7 +5429,10 @@ NULL
                         "while I still hold keys for this hash slot.", slot);
                     return;
                 }
+
+                may_be_master = server.cluster->migrating_slots_to[slot];
             }
+
             /* If this slot is in migrating status but we have no keys
              * for it assigning the slot to another node will clear
              * the migrating status. */
@@ -5410,6 +5442,15 @@ NULL
 
             clusterDelSlot(slot);
             clusterAddSlot(n,slot);
+
+            if (myself->numslots == 0 && may_be_master) {
+                /* After this SETSLOT, myself lost its last slot (in migrating state),
+                 * and `n` may become myself new master, set a reference and we may
+                 * handle it in clusterProcessPacket after receive `n`'s PONG. */
+                myself->may_be_master = may_be_master;
+            } else if (myself->numslots != 0) {
+                myself->may_be_master = NULL;
+            }
 
             /* If this node was importing this slot, assigning the slot to
              * itself also clears the importing status. */

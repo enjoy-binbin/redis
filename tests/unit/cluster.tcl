@@ -271,13 +271,24 @@ test {Migrate the last slot away from a node using redis-cli} {
             --cluster-slots 1 \
             --cluster-yes
 
+        # The empty node may become a replica of the new owner before the
+        # MOVED check, so let's wait for the cluster to become stable.
+        wait_for_condition 1000 50 {
+            [csi 0 cluster_state] eq {ok} &&
+            [csi -1 cluster_state] eq {ok} &&
+            [csi -2 cluster_state] eq {ok} &&
+            [csi -3 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
         # Check that the key foo has been migrated back to the original owner.
         catch { $newnode_r get foo } e
         assert_equal "MOVED $slot $owner_host:$owner_port" $e
 
         # Check that the empty node has turned itself into a replica of the new
         # owner and that the new owner knows that.
-        wait_for_condition 5000 100 {
+        wait_for_condition 500 100 {
             [string match "*slave*" [$owner_r CLUSTER REPLICAS $owner_id]]
         } else {
             fail "Empty node didn't turn itself into a replica."
