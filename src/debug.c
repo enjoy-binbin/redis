@@ -969,20 +969,42 @@ NULL
         server.pause_cron = atoi(c->argv[2]->ptr);
         addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"replybuffer") && c->argc == 4 ) {
-        if(!strcasecmp(c->argv[2]->ptr, "peak-reset-time")) {
+        if (!strcasecmp(c->argv[2]->ptr, "peak-reset-time")) {
             if (!strcasecmp(c->argv[3]->ptr, "never")) {
                 server.reply_buffer_peak_reset_time = -1;
-            } else if(!strcasecmp(c->argv[3]->ptr, "reset")) {
+            } else if (!strcasecmp(c->argv[3]->ptr, "reset")) {
                 server.reply_buffer_peak_reset_time = REPLY_BUFFER_DEFAULT_PEAK_RESET_TIME;
             } else {
                 if (getLongFromObjectOrReply(c, c->argv[3], &server.reply_buffer_peak_reset_time, NULL) != C_OK)
                     return;
             }
-        } else if(!strcasecmp(c->argv[2]->ptr,"resizing")) {
+        } else if (!strcasecmp(c->argv[2]->ptr, "resizing")) {
             server.reply_buffer_resizing_enabled = atoi(c->argv[3]->ptr);
         } else {
             addReplySubcommandSyntaxError(c);
             return;
+        }
+        addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr, "script") && c->argc == 3) {
+        if (!strcasecmp(c->argv[2]->ptr, "list")) {
+            /* DEBUG SCRIPT LIST */
+            dictEntry *de;
+            dictIterator *di = dictGetSafeIterator(evalScriptsDict());
+            while ((de = dictNext(di)) != NULL) {
+                sds script_info = evalScriptInfo(de);
+                serverLog(LL_WARNING, "%s", script_info);
+                sdsfree(script_info);
+            }
+        } else {
+            /* DEBUG SCRIPT <SHA> */
+            dictEntry *de;
+            if ((de = dictFind(evalScriptsDict(), c->argv[2]->ptr)) != NULL) {
+                sds script_info = evalScriptInfo(de);
+                serverLog(LL_WARNING, "%s", script_info);
+                sdsfree(script_info);
+            } else {
+                serverLog(LL_WARNING, "script not found: %s", (char*)c->argv[2]->ptr);
+            }
         }
         addReply(c, shared.ok);
     } else {

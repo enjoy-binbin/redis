@@ -3170,6 +3170,7 @@ void sha1hex(char *digest, char *script, size_t len);
 unsigned long evalMemory();
 dict* evalScriptsDict();
 unsigned long evalScriptsMemory();
+sds evalScriptInfo(dictEntry *de);
 
 typedef struct luaScript {
     uint64_t flags;

@@ -645,6 +645,19 @@ unsigned long evalScriptsMemory() {
             dictSlots(lctx.lua_scripts) * sizeof(dictEntry*);
 }
 
+sds evalScriptInfo(dictEntry *de) {
+    sds sha = dictGetKey(de);
+    luaScript *l = dictGetVal(de);
+
+    sds script_info = sdsempty();
+    script_info = sdscatlen(script_info, "sha ", 4);
+    script_info = sdscatsds(script_info, sha);
+    script_info = sdscatlen(script_info, "\n", 1);
+    script_info = sdscatlen(script_info, (char*)l->body->ptr, sdslen(l->body->ptr));
+
+    return script_info;
+}
+
 /* ---------------------------------------------------------------------------
  * LDB: Redis Lua debugging facilities
  * ------------------------------------------------------------------------- */
