@@ -157,7 +157,7 @@ typedef struct quicklistEntry {
     const quicklist *quicklist;
     // 指向该 zlentry 所在的 quicklistNode
     quicklistNode *node;
-    // 指向该 zlentry 所在的 ziplist
+    // 指向在 ziplist 里的目标 zlentry，zi 感觉是 ziplistEntry index 这样的缩写意思
     unsigned char *zi;
     // 如果 zlentry 数据类型为字符串时，value 和 sz 结合保存该值
     unsigned char *value;
