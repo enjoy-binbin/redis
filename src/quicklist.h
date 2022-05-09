@@ -43,16 +43,32 @@
  * recompress: 1 bit, bool, true if node is temporary decompressed for usage.
  * attempted_compress: 1 bit, boolean, used for verifying during testing.
  * extra: 10 bits, free for future use; pads out the remainder of 32 bits */
+// quicklistNode 是一个 32 字节的结构，是一个在 quicklist 里的一个 ziplist
+// 使用位域将它保持在 32 个字节里
 typedef struct quicklistNode {
+    // 指向前驱节点的指针，8 bytes
     struct quicklistNode *prev;
+    // 指向后继节点的指针，8 bytes
     struct quicklistNode *next;
+    // 数据指针，如果数据没有压缩，指向一个 ziplist 结构，否则指向一个 quicklistLZF 结构，8 bytes
     unsigned char *zl;
+    // ziplist 的占用内存字节大小，即前面 ziplist 讲过的 zlbytes，4 bytes
     unsigned int sz;             /* ziplist size in bytes */
+
+    // 下面这些字段使用位域，将总长度限制在了 32 位，也就是 4 个字节，将整个 quicklistNode 保持在 32 字节
+
+    // 16 位，ziplist 里的节点数量，即前面 ziplist 讲过的 zllen
     unsigned int count : 16;     /* count of items in ziplist */
+    // 2 位，ziplist 的编码方式，RAW 表示原生 ziplist，LZF 表示使用 LZF 对 ziplist 进行了压缩
     unsigned int encoding : 2;   /* RAW==1 or LZF==2 */
+    // 2 位，数据容器，目前值都为 2，表示用的是 ziplist
     unsigned int container : 2;  /* NONE==1 or ZIPLIST==2 */
+    // 1 位，如果为 true 表示临时使用，对这个节点进行了数据项的解压
+    // 当类似使用 lindex 来查找某一项本来被压缩了的节点数据，此时就需要展示解压获取数据，之后再重新压缩
     unsigned int recompress : 1; /* was this node previous compressed? */
+    // 1 位，目前是用于测试，数据能否被压缩
     unsigned int attempted_compress : 1; /* node can't compress; too small */
+    // 10 位，用于扩展，而实际上一直到 7.0 也没有用上，32 - (16 + 2 + 2 + 1 + 1) = 10，填充到 32 位
     unsigned int extra : 10; /* more bits to steal for future usage */
 } quicklistNode;
 
@@ -61,8 +77,13 @@ typedef struct quicklistNode {
  * 'compressed' is LZF data with total (compressed) length 'sz'
  * NOTE: uncompressed length is stored in quicklistNode->sz.
  * When quicklistNode->zl is compressed, node->zl points to a quicklistLZF */
+// quicklistLZF 是一个 4+N 字节大小的结构体，在 sz 后面紧跟着压缩后的字符数组
+// 压缩后的 ziplist 大小存储在 LZF->sz 中，未压缩的长度是存储在 quicklistNode->sz 里
+// 如果 ziplist 有进行压缩，node->zl 指向 quicklistLZF，没压缩则指向 ziplist
 typedef struct quicklistLZF {
+    // 对 ziplist 进行 LZF 压缩后大内存占用大小，即后面 compressed 字节数组的长度，4 bytes
     unsigned int sz; /* LZF size in bytes*/
+    // 存放压缩后的 ziplist 字节数组，是个柔性数组（不指定大小，需要放在成员最后）
     char compressed[];
 } quicklistLZF;
 
