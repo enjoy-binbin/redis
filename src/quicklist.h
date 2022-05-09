@@ -121,16 +121,25 @@ typedef struct quicklistBookmark {
  * 'compress' is: 0 if compression disabled, otherwise it's the number
  *                of quicklistNodes to leave uncompressed at ends of quicklist.
  * 'fill' is the user-requested (or default) fill factor.
- * 'bookmakrs are an optional feature that is used by realloc this struct,
+ * 'bookmarks are an optional feature that is used by realloc this struct,
  *      so that they don't consume memory when not used. */
+// quicklist 是一个 40 字节大小的结构体（64 位操作系统下），是一个双端链表
 typedef struct quicklist {
+    // 指向头节点的指针，8 bytes
     quicklistNode *head;
+    // 指向尾节点的指针，8 bytes
     quicklistNode *tail;
+    // 快速列表的元素数，所有 ziplists 中所有节点的总数，8 bytes
     unsigned long count;        /* total count of all entries in all ziplists */
+    // 快速列表的节点数，8 bytes
     unsigned long len;          /* number of quicklistNodes */
+    // 填充因子，存放 list-max-ziplist-size 参数值，16 位（64 操作系统下）
     int fill : QL_FILL_BITS;              /* fill factor for individual nodes */
+    // 压缩配置，存放 list-compress-depth 参数值，16 位（64 操作系统下）
     unsigned int compress : QL_COMP_BITS; /* depth of end nodes not to compress;0=off */
+    // bookmarks 数组的大小，4 位
     unsigned int bookmark_count: QL_BM_BITS;
+    // 是一个可选的字段，用于重新分配 quicklist 的空间，不使用时不会消耗内存
     quicklistBookmark bookmarks[];
 } quicklist;
 
@@ -142,13 +151,22 @@ typedef struct quicklistIter {
     int direction;
 } quicklistIter;
 
+// 用来描述 quicklist 中的每个 zlentry，其实就类似 ziplist 里面 zlentry 的使用，方便用来表示一个元素项
 typedef struct quicklistEntry {
+    // 指向该 zlentry 所在的 quicklist
     const quicklist *quicklist;
+    // 指向该 zlentry 所在的 quicklistNode
     quicklistNode *node;
+    // 指向该 zlentry 所在的 ziplist
     unsigned char *zi;
+    // 如果 zlentry 数据类型为字符串时，value 和 sz 结合保存该值
     unsigned char *value;
+    // 如果 zlentry 数据类型为整型, longval 保存了该值
     long long longval;
+    // 该 zlentry 的 size
     unsigned int sz;
+    // 该 zlentry 在 node->zl 中的偏移量，相当于标识是第几个数据项
+    // eg: 第一个数据项 offset=0，最后一个数据项 offset=node->count
     int offset;
 } quicklistEntry;
 

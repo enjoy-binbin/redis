@@ -852,13 +852,18 @@ REDIS_STATIC quicklistNode *_quicklistSplitNode(quicklistNode *node, int offset,
  *
  * If after==1, the new value is inserted after 'entry', otherwise
  * the new value is inserted before 'entry'. */
+// 在指定 entry 的前后插入新 entry，after == 1 新元素插在后面，否则插在前面
 REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
                                    void *value, const size_t sz, int after) {
+    //
     int full = 0, at_tail = 0, at_head = 0, full_next = 0, full_prev = 0;
     int fill = quicklist->fill;
+    // entry 所属的 quicklistNode
     quicklistNode *node = entry->node;
+    // 新 entry 将所属的 quicklistNode
     quicklistNode *new_node = NULL;
-    assert(sz < UINT32_MAX); /* TODO: add support for quicklist nodes that are sds encoded (not zipped) */
+    // 溢出检查
+    assert(sz < UINT32_MAX);
 
     if (!node) {
         /* we have no reference node, so let's create only node in the list */
