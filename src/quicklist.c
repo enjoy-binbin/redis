@@ -949,8 +949,11 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         quicklistDecompressNodeForUse(node);
         // 在 ziplist 的当前 entry 位置上插入新 entry
         node->zl = ziplistInsert(node->zl, entry->zi, value, sz);
+        // 维护节点总 entry 个数
         node->count++;
+        // 更新计算 node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(node);
+        // 如果节点需要重新压缩，即判断 recompress = 1，为真则重新压缩
         quicklistRecompressOnly(quicklist, node);
     } else if (full && at_tail && node->next && !full_next && after) {
         /* If we are: at tail, next has free space, and inserting after:
