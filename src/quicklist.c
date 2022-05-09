@@ -855,7 +855,7 @@ REDIS_STATIC quicklistNode *_quicklistSplitNode(quicklistNode *node, int offset,
 // 在指定 entry 的前后插入新 entry，after == 1 新元素插在后面，否则插在前面
 REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
                                    void *value, const size_t sz, int after) {
-    //
+    // full: 标识后面的 node 是否有满（能否插入 sz 大小的新 entry）
     int full = 0, at_tail = 0, at_head = 0, full_next = 0, full_prev = 0;
     int fill = quicklist->fill;
     // entry 所属的 quicklistNode
@@ -868,15 +868,21 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     if (!node) {
         /* we have no reference node, so let's create only node in the list */
         D("No node given!");
+        // 如果 entry 没有所属的 quicklistNode，需要新创建一个节点
         new_node = quicklistCreateNode();
+        // 创建一个新的 ziplist 将新 entry 存储进去，然后挂到新节点
         new_node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
+        // 将新节点插入到 quicklist 中
         __quicklistInsertNode(quicklist, NULL, new_node, after);
+        // 更新维护相关计数器
         new_node->count++;
         quicklist->count++;
         return;
     }
 
     /* Populate accounting flags for easier boolean checks later */
+    // 检查 node 能否插入新 entry，其实就是检查对应的 ziplist 大小 / 节点数量
+    // 如果不能插入，设置 full 标志
     if (!_quicklistNodeAllowInsert(node, fill, sz)) {
         D("Current node is full with count %d with requested fill %lu",
           node->count, fill);
