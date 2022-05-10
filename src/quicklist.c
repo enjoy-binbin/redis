@@ -863,8 +863,8 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     int fill = quicklist->fill;
     // 当前 entry 所属的 quicklistNode
     quicklistNode *node = entry->node;
-    // 一个指针用来指向 node 的后继节点或者前驱节点或者一个新创建的节点
-    // 用于后面节点插入 entry，即新 entry 如果不插在 node 节点里，会插在 new_node 节点里
+    // 一个指针用来指向 node 的 后继节点 / 前驱节点 / 一个新创建的节点 / 节点拆分后返回的节点
+    // 用于后面节点插入 entry，即新 entry 如果不是插在 node 节点里，就是插在 new_node 节点里
     quicklistNode *new_node = NULL;
     // 溢出检查，ziplist 占用字节数 zlbytes 最大不会超过它
     assert(sz < UINT32_MAX);
@@ -878,7 +878,7 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         new_node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
         // 将新节点插入到 quicklist 中
         __quicklistInsertNode(quicklist, NULL, new_node, after);
-        // 更新维护相关计数器，节点 entry 总数，快速列表的节点总数
+        // 更新维护相关计数器，节点 entry 总数，快速列表的 entry 总数
         new_node->count++;
         quicklist->count++;
         return;
@@ -1009,26 +1009,47 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         D("\tprovisioning new node...");
         // 创建一个新节点
         new_node = quicklistCreateNode();
+        // 创建一个新的 ziplist 将新 entry 存储进去，然后将 ziplist 首地址赋值到新节点的 zl 指针
         new_node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
+        // 维护 new_node 节点的总 entry 个数
         new_node->count++;
+        // 更新计算 new_node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(new_node);
+        // 调用方法将 new_node 插入到 node 的前面或者后面
         __quicklistInsertNode(quicklist, node, new_node, after);
 
     } else if (full) {
         /* else, node is full we need to split it. */
         /* covers both after and !after cases */
-        // 当前节点满了，并且是在节点中间插入（ziplist 中间插入），此时需要拆分节点
+        // 当前节点满了，并且是在节点中间插入（ziplist 中间插入），此时没办法进行插入，
+        // 需要将这个满了的节点，根据当前 entry 的位置，拆分成两个节点
         D("\tsplitting node...");
+        // 如果 new_node 节点是压缩的，则将它解压并且设置 recompress = 1
         quicklistDecompressNodeForUse(node);
+        // 调用方法在 entry offset 位置拆分节点
+        // 假设要在 [A, C] 中间插入 B，变成 [A, B, C]，node 为输入的节点，new_node 为返回的节点，同时也是新 entry 插入的节点
+        // after == 1: 在 A 后面插入 B，根据 A 拆分节点后，node: [A], new_node: [C], B 在 new_node 头部插入，[A] -> [B, C]
+        // after == 0：在 C 前面插入 B，根据 C 拆分节点后：node: [C], new_node: [A], B 在 new_node 尾部插入，[A, B] -> [C]
         new_node = _quicklistSplitNode(node, entry->offset, after);
+        // 将新 entry 根据 after 判断插在 new_node 的头部（after=1）还是尾部（after=0）
         new_node->zl = ziplistPush(new_node->zl, value, sz,
                                    after ? ZIPLIST_HEAD : ZIPLIST_TAIL);
+        // 维护 new_node 节点的总 entry 个数
         new_node->count++;
+        // 更新计算 new_node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(new_node);
+        // 调用方法将 new_node 插入到 node 的前面或者后面
         __quicklistInsertNode(quicklist, node, new_node, after);
+        // 节点拆分后，且新节点已经插入，尝试合并节点，左右能合并的就合并，满足配置项的情况下，减少小节点数量
+        // 假设是 A B C D E，node 为 C，尝试对下面区间的节点进行合并
+        // - (center->prev->prev, center->prev): [A, B]
+        // - (center->next, center->next->next): [D, E]
+        // - (center->prev, center): [B, C]
+        // - (center, center->next): [C, D]
         _quicklistMergeNodes(quicklist, node);
     }
 
+    // 维护快速列表的 entry 总数
     quicklist->count++;
 }
 
