@@ -425,13 +425,16 @@ _quicklistNodeSizeMeetsOptimizationRequirement(const size_t sz,
 
 #define sizeMeetsSafetyLimit(sz) ((sz) <= SIZE_SAFETY_LIMIT)
 
+// 检查一个 quicklistNode 在 fill 配置项下，能否插入 sz 大小的 entry
 REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
                                            const int fill, const size_t sz) {
+    // 节点不存在直接返回
     if (unlikely(!node))
         return 0;
 
     int ziplist_overhead;
     /* size of previous offset */
+    // 小于254时, 后一个节点的pre只有1 bytes, 否则为5 bytes
     if (sz < 254)
         ziplist_overhead = 1;
     else
@@ -857,8 +860,9 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
                                    void *value, const size_t sz, int after) {
     // full: 标识后面的 node 是否有满（能否插入 sz 大小的新 entry）
     // full_next: 标识 node.next 是否有满（能否插入 sz 大小的新 entry）
-    // at_tail: 标识是否在 node 节点尾部插入（节点里面的 ziplist 的尾部插入）
-    // at_head: 标识是否在 node 节点头部插入（节点里面的 ziplist 的头部插入）
+    // full_prev: 标识 node.prev 是否有满（能否插入 sz 大小的新 entry）
+    // at_tail: entry->offset == node->count 标识是否在 node 节点尾部插入（节点里面的 ziplist 的尾部插入）
+    // at_head: entry->offset == 0 标识是否在 node 节点头部插入（节点里面的 ziplist 的头部插入）
     int full = 0, at_tail = 0, at_head = 0, full_next = 0, full_prev = 0;
     int fill = quicklist->fill;
     // 当前 entry 所属的 quicklistNode
