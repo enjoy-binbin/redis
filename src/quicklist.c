@@ -423,6 +423,14 @@ _quicklistNodeSizeMeetsOptimizationRequirement(const size_t sz,
     }
 }
 
+/* Maximum size in bytes of any multi-element ziplist.
+ * Larger values will live in their own isolated ziplists.
+ * This is used only if we're limited by record count. when we're limited by
+ * size, the maximum limit is bigger, but still safe.
+ * 8k is a recommended / default size limit */
+// 限制单个 ziplist 不超过 8KB（推荐 / 默认）
+#define SIZE_SAFETY_LIMIT 8192
+
 #define sizeMeetsSafetyLimit(sz) ((sz) <= SIZE_SAFETY_LIMIT)
 
 // 检查一个 quicklistNode 在 fill 配置项下，能否插入 sz 大小的 entry
@@ -432,15 +440,25 @@ REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
     if (unlikely(!node))
         return 0;
 
+    // ziplist_overhead: 记录 ziplist 一些额外占用，例如后面的 prevlen / tail_offset
     int ziplist_overhead;
+
     /* size of previous offset */
-    // 小于254时, 后一个节点的pre只有1 bytes, 否则为5 bytes
+    // 在 ziplist 插入 sz 大小的 zlentry 后，插入元素后面 zlentry 的 prevrawlensize 的值，ziplist 部分的知识
+    // sz < 254 prevlen 使用 1 个字节就能编码；sz >= 254 prevlen 使用 5 个字节进行编码
+    // 这里其实还能判断是否在 ziplist 末尾插入，如果是的话，这个 prevlensize 的开销可以省去
+    // 不过在目前 7.0 版本 listpack 实现里，我们显式的 overestimation 高估一个 entry 的占用字节（貌似内存对齐相关的优化点）
     if (sz < 254)
         ziplist_overhead = 1;
     else
         ziplist_overhead = 5;
 
     /* size of forward offset */
+    // 插入 zlentry 的 lensize 值，编码 encoding 部分需要的字节数，ziplist 部分的知识
+    // 可以看到下面的 1 2 5，实际上调用方是把新 entry 当作字符串来存储的，sz 是字符串长度
+    // 长度小于 2^6-1 用 1 个字节编码
+    // 长度小于 2^14-1 用 2 个字节编码
+    // 长度小于 2^32-1 用 5 个字节编码
     if (sz < 64)
         ziplist_overhead += 1;
     else if (likely(sz < 16384))
@@ -449,13 +467,22 @@ REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
         ziplist_overhead += 5;
 
     /* new_sz overestimates if 'sz' encodes to an integer type */
+    // 上面 1 2 5 有说是当作字符串计算 lensize 的，但是实际上字符串能用整数表示并且存储，这里 ziplist_overhead 会有点点误差
+    // new_sze 是原本的 ziplist 大小 + 节点的数据长度 + 节点的元数据部分（prevlenrawsize + lensize）即插入后的 ziplist 大概大小
     unsigned int new_sz = node->sz + sz + ziplist_overhead;
+
+    // 下面是判断 sz 是否能满足插入要求的逻辑，单个 ziplist 是否不超过 8KB，或者单个 ziplist entry 个数不超过配置值
+    // 是有有一个条件满足，就能在这个节点中插入新 entry，否则就需要创建一个新 quicklistNode 来保存插入的 entry
+
+    // 插入后的 ziplist 大小 new_sz 如果符合 fill 配置项设置，允许在节点中插入，返回 1
     if (likely(_quicklistNodeSizeMeetsOptimizationRequirement(new_sz, fill)))
         return 1;
     /* when we return 1 above we know that the limit is a size limit (which is
      * safe, see comments next to optimization_level and SIZE_SAFETY_LIMIT) */
+    // new_sz 不满足安全界限，new_sz 要 <= 8192，限制单个 ziplist 最大到 8KB（默认值 && 推荐值）
     else if (!sizeMeetsSafetyLimit(new_sz))
         return 0;
+    // 到这里的话，fill 是正数的情况，就是判断 node->count + 1 <= fill
     else if ((int)node->count < fill)
         return 1;
     else
