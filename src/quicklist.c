@@ -361,35 +361,50 @@ REDIS_STATIC void __quicklistInsertNode(quicklist *quicklist,
                                         quicklistNode *old_node,
                                         quicklistNode *new_node, int after) {
     if (after) {
-        // 新节点插入到老节点后面
+        // 新节点插入到老节点后面，新节点的前驱节点为老节点。old_node <-> new_node
         new_node->prev = old_node;
         if (old_node) {
+            // 如果老节点是有传的，常规进行双端链表的一些指针维护，如果没传一般就是空链表插入
+            // 新节点的后继节点是老节点原本的后继节点
             new_node->next = old_node->next;
+            // 如果老节点有后继节点，则老节点的后继节点的前驱节点为新节点
             if (old_node->next)
                 old_node->next->prev = new_node;
+            // 老节点的后继节点是新节点
             old_node->next = new_node;
         }
+        // 如果原本老节点是尾节点，在它后面插入新节点，此时新节点成为链表新尾节点
         if (quicklist->tail == old_node)
             quicklist->tail = new_node;
     } else {
+        // 新节点插入到老节点前面，新节点的后继节点是老节点。new_node <-> old_node
         new_node->next = old_node;
         if (old_node) {
+            // 如果老节点有传，常规的进行双端链表的一些指针维护，如果没传一般就是空链表插入
+            // 新节点的前驱节点是老节点原本的前驱节点
             new_node->prev = old_node->prev;
+            // 如果老节点有前驱节点，则老节点的前驱节点的后继节点为新节点
             if (old_node->prev)
                 old_node->prev->next = new_node;
+            // 老节点的前驱节点是新节点
             old_node->prev = new_node;
         }
+        // 如果原本老节点是头节点，在它前面插入新节点，此时新节点成为链表新头节点
         if (quicklist->head == old_node)
             quicklist->head = new_node;
     }
     /* If this insert creates the only element so far, initialize head/tail. */
+    // 如果是空链表，即节点数量（长度）为 0，新插入的节点同时也是链表的头尾节点
     if (quicklist->len == 0) {
         quicklist->head = quicklist->tail = new_node;
     }
 
     /* Update len first, so in __quicklistCompress we know exactly len */
+    // 维护链表长度，节点数量。
+    // 这个更新以前是放在 quicklistCompress(old_node) 的后面，可能会造成更多的节点被压缩
     quicklist->len++;
 
+    // 尝试对老节点进行压缩，如果有设置 recompress 进行压缩，否则根据配置项来判断是否需要压缩 #8311
     if (old_node)
         quicklistCompress(quicklist, old_node);
 }
@@ -1487,6 +1502,9 @@ void quicklistRotate(quicklist *quicklist) {
  * Return value of 0 means no elements available.
  * Return value of 1 means check 'data' and 'sval' for values.
  * If 'data' is set, use 'data' and 'sz'.  Otherwise, use 'sval'. */
+// 从 quicklist 头或者尾弹出一个 entry，如果有弹出函数返回 1，没有元素可以弹返回 0
+// 如果元素是一个 long long，结果将会被保存到 sval 中返回
+// 如果元素不是数字，结果将先通过调用 saver 函数（函数可以自定义返回调用方想要的），然后把函数结果保存到 data 中返回
 int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
                        unsigned int *sz, long long *sval,
                        void *(*saver)(unsigned char *data, unsigned int sz)) {
@@ -1494,11 +1512,14 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
     unsigned char *vstr;
     unsigned int vlen;
     long long vlong;
+    // 确认弹出下标，头部弹出的话下标为 0，尾部弹出下标为 -1
     int pos = (where == QUICKLIST_HEAD) ? 0 : -1;
 
+    // 如果链表 entry 数为 0，直接返回
     if (quicklist->count == 0)
         return 0;
 
+    // 进行一些初始化
     if (data)
         *data = NULL;
     if (sz)
@@ -1506,17 +1527,23 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
     if (sval)
         *sval = -123456789;
 
+    // 记录链表头节点或者尾节点，从 node 里进行弹出
     quicklistNode *node;
     if (where == QUICKLIST_HEAD && quicklist->head) {
+        // 从链表头进行弹出
         node = quicklist->head;
     } else if (where == QUICKLIST_TAIL && quicklist->tail) {
+        // 从链表尾进行弹出
         node = quicklist->tail;
     } else {
+        // 只能从头或者尾弹出，觉得这个是一个 dead path，它描述的其实是一个空链表
         return 0;
     }
 
+    // 从对应节点的 ziplist 里的对应下标，获取 zlentry 的地址
     p = ziplistIndex(node->zl, pos);
     if (ziplistGet(p, &vstr, &vlen, &vlong)) {
+        // 将
         if (vstr) {
             if (data)
                 *data = saver(vstr, vlen);
