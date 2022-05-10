@@ -858,14 +858,14 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     // full: 标识后面的 node 是否有满（能否插入 sz 大小的新 entry）
     // full_next: 标识 node.next 是否有满（能否插入 sz 大小的新 entry）
     // at_tail: 标识是否在 node 节点尾部插入（节点里面的 ziplist 的尾部插入）
-    // at_head:
+    // at_head: 标识是否在 node 节点头部插入（节点里面的 ziplist 的头部插入）
     int full = 0, at_tail = 0, at_head = 0, full_next = 0, full_prev = 0;
     int fill = quicklist->fill;
-    // entry 所属的 quicklistNode
+    // 当前 entry 所属的 quicklistNode
     quicklistNode *node = entry->node;
-    // 新 entry 将所属的 quicklistNode
+    // 一个指针用来指向 node 的后继节点或者前驱节点，用于后面节点插入 entry
     quicklistNode *new_node = NULL;
-    // 溢出检查
+    // 溢出检查，ziplist 占用字节数 zlbytes 最大不会超过它
     assert(sz < UINT32_MAX);
 
     if (!node) {
@@ -873,11 +873,11 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         D("No node given!");
         // 如果 entry 没有所属的 quicklistNode，需要新创建一个节点
         new_node = quicklistCreateNode();
-        // 创建一个新的 ziplist 将新 entry 存储进去，然后挂到新节点
+        // 创建一个新的 ziplist 将新 entry 存储进去，然后将 ziplist 首地址赋值到新节点的 zl 指针
         new_node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
         // 将新节点插入到 quicklist 中
         __quicklistInsertNode(quicklist, NULL, new_node, after);
-        // 更新维护相关计数器
+        // 更新维护相关计数器，节点 entry 总数，快速列表的节点总数
         new_node->count++;
         quicklist->count++;
         return;
@@ -886,7 +886,7 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     /* Populate accounting flags for easier boolean checks later */
     // 检查 node 能否插入新 entry，其实就是检查对应的 ziplist 大小 / 节点数量
     if (!_quicklistNodeAllowInsert(node, fill, sz)) {
-        // 如果不能插入，设置 full 标志
+        // 如果不能插入，设置 full 标志，表示当前节点已经满了
         D("Current node is full with count %d with requested fill %lu",
           node->count, fill);
         full = 1;
@@ -894,13 +894,14 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
 
     // entry-offset: entry 在 node 里的位置偏移量
     // node->count: quicklistNode 里的 entry 数量
-    // 后插入，且它两相等的话，说明当前 entry 是 quicklistNode 节点的最后一个 entry
+    // 后插入，且它两相等的话，说明当前 entry 是 当前节点的最后一个 entry（同时也是 ziplist 里的最后一个 entry）
     if (after && (entry->offset == node->count)) {
         // 在节点尾 entry 之后插入，设置 at_tail 标志
         D("At Tail of current ziplist");
         at_tail = 1;
         if (!_quicklistNodeAllowInsert(node->next, fill, sz)) {
-            // 判断后一个节点是否能够插入新 entry，如果不能的话，设置 full_next 标志
+            // 判断后继节点是否能够插入新 entry，如果不能的话，设置 full_next 标志
+            // 因为假如当前节点满了的话，没办法后插入，我们需要插入到它的后继节点的头部（如果后继节点没满的话）
             D("Next node is full too.");
             full_next = 1;
         }
@@ -913,41 +914,43 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         at_head = 1;
         if (!_quicklistNodeAllowInsert(node->prev, fill, sz)) {
             // 判断前一个节点是否能够插入新 entry，如果不能的话，设置 full_prev 标志
+            // 因为假如当前节点满了的话，没办法前插入，我们需要插入到它的前驱节点的尾部（如果前驱节点没满的话）
             D("Prev node is full too.");
             full_prev = 1;
         }
     }
 
     /* Now determine where and how to insert the new element */
-    // 后面就是决定在哪里，以及怎么插入新元素的核心代码
+    // 后面就是决定在哪里，以及怎么插入新元素的核心代码，如果节点都满了的话又要怎么插入等等等情况
 
     if (!full && after) {
-        // 如果当前节点没有满，并且是后插入，则将新 entry 插入到当前 entry 位置的后面
+        // 如果当前节点没有满，并且是后插入，则可以直接将新 entry 插入到当前 entry 位置的后面
         D("Not full, inserting after current position.");
         // 如果节点是压缩的，则将当前节点解压并且设置 recompress = 1
         quicklistDecompressNodeForUse(node);
         // 获取当前 entry 的下一个 entry
         unsigned char *next = ziplistNext(node->zl, entry->zi);
         if (next == NULL) {
-            // 如果 entry next 为空，说明新 entry 是可以直接插入到 ziplist 的尾部
+            // 如果 entry next 为空，在尾部插入，说明新 entry 是可以直接插入到 ziplist 尾部的
             node->zl = ziplistPush(node->zl, value, sz, ZIPLIST_TAIL);
         } else {
-            // 如果 entry next 不为空，说明新 entry 是需要插入在 entry next 的位置上
-            // 在 ziplist 的 entry next 位置上插入新 entry
+            // 如果 entry.next 不为空，在中间插入，说明新 entry 是需要插入在 entry.next 的位置上
+            // 在 ziplist 的 entry.next 位置上插入新 entry，entry.next 和它后面的 zlentry 需要后移
             node->zl = ziplistInsert(node->zl, next, value, sz);
         }
         // 维护节点总 entry 个数
         node->count++;
-        // 更新计算 node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
+        // 更新计算 node->sz，就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(node);
         // 如果节点需要重新压缩，即判断 recompress = 1，为真则重新压缩
         quicklistRecompressOnly(quicklist, node);
+
     } else if (!full && !after) {
         // 如果当前节点没有满，并且是前插入，则将新 entry 插入到当前 entry 位置的前面
         D("Not full, inserting before current position.");
         // 如果节点是压缩的，则将当前节点解压并且设置 recompress = 1
         quicklistDecompressNodeForUse(node);
-        // 在 ziplist 的当前 entry 位置上插入新 entry
+        // 在 ziplist 的当前 entry 位置上插入新 entry，当前 entry 和它后面的 zlentry 需要后移
         node->zl = ziplistInsert(node->zl, entry->zi, value, sz);
         // 维护节点总 entry 个数
         node->count++;
@@ -955,26 +958,45 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         quicklistNodeUpdateSz(node);
         // 如果节点需要重新压缩，即判断 recompress = 1，为真则重新压缩
         quicklistRecompressOnly(quicklist, node);
+
     } else if (full && at_tail && node->next && !full_next && after) {
         /* If we are: at tail, next has free space, and inserting after:
          *   - insert entry at head of next node. */
+        // 后插入：如果当前节点是满的，且当前 entry 是尾部的，且存在后继节点，且后继节点没满
+        // 本来想插入到当前节点中当前 entry 后面（节点尾部插入)，但是因为当前节点满了，所以插入到后继节点的头部
         D("Full and tail, but next isn't full; inserting next node head");
+        // new_node 指向当前节点的后继节点
         new_node = node->next;
+        // 如果 new_node 节点是压缩的，则将它解压并且设置 recompress = 1
         quicklistDecompressNodeForUse(new_node);
+        // 在 new_node->zl 的 ZIPLIST_HEAD 位置插入新 entry，即在后继节点的 ziplist 头部插入新 entry
         new_node->zl = ziplistPush(new_node->zl, value, sz, ZIPLIST_HEAD);
+        // 维护 new_node 节点的总 entry 个数
         new_node->count++;
+        // 更新计算 new_node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(new_node);
+        // 如果节点需要重新压缩，即判断 recompress = 1，为真则重新压缩
         quicklistRecompressOnly(quicklist, new_node);
+
     } else if (full && at_head && node->prev && !full_prev && !after) {
         /* If we are: at head, previous has free space, and inserting before:
          *   - insert entry at tail of previous node. */
+        // 前插入：如果当前节点满了，且当前 entry 是头部的，且存在前驱节点，且前驱节点没有满
+        // 本来是想插入到当前节点的当前 entry 前面（节点头部插入），但是因为当前节点满了，所以插入到前驱节点的尾部
         D("Full and head, but prev isn't full, inserting prev node tail");
+        // new_node 指向当前节点的前驱节点
         new_node = node->prev;
+        // 如果 new_node 节点是压缩的，则将它解压并且设置 recompress = 1
         quicklistDecompressNodeForUse(new_node);
+        // 在 new_node->zl 的 ZIPLIST_TAIL 位置插入新 entry，即在前驱节点的 ziplist 尾部插入新 entry
         new_node->zl = ziplistPush(new_node->zl, value, sz, ZIPLIST_TAIL);
+        // 维护 new_node 节点的总 entry 个数
         new_node->count++;
+        // 更新计算 new_node->sz，就是就是获取 ziplist 总字节数 zlbytes，时间复杂度是 O(1)
         quicklistNodeUpdateSz(new_node);
+        // 如果节点需要重新压缩，即判断 recompress = 1，为真则重新压缩
         quicklistRecompressOnly(quicklist, new_node);
+
     } else if (full && ((at_tail && node->next && full_next && after) ||
                         (at_head && node->prev && full_prev && !after))) {
         /* If we are: full, and our prev/next is full, then:
@@ -985,6 +1007,7 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
         new_node->count++;
         quicklistNodeUpdateSz(new_node);
         __quicklistInsertNode(quicklist, node, new_node, after);
+
     } else if (full) {
         /* else, node is full we need to split it. */
         /* covers both after and !after cases */
