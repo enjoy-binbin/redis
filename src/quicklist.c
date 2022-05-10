@@ -863,7 +863,8 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     int fill = quicklist->fill;
     // 当前 entry 所属的 quicklistNode
     quicklistNode *node = entry->node;
-    // 一个指针用来指向 node 的后继节点或者前驱节点，用于后面节点插入 entry
+    // 一个指针用来指向 node 的后继节点或者前驱节点或者一个新创建的节点
+    // 用于后面节点插入 entry，即新 entry 如果不插在 node 节点里，会插在 new_node 节点里
     quicklistNode *new_node = NULL;
     // 溢出检查，ziplist 占用字节数 zlbytes 最大不会超过它
     assert(sz < UINT32_MAX);
@@ -1001,7 +1002,12 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
                         (at_head && node->prev && full_prev && !after))) {
         /* If we are: full, and our prev/next is full, then:
          *   - create new node and attach to quicklist */
+        // 在当前节点的尾部插入，但是当前节点跟后继节点都满了
+        // 在当前节点的头部插入，但是当前节点跟前驱节点都满了
+        // 我们想在节点头或者尾插入，但是节点和它的前驱或者后继节点都是满的，没办法插入
+        // 此时需要创建一个新的 quicklistNode 节点来单独存储新 entry，插入到它两中间
         D("\tprovisioning new node...");
+        // 创建一个新节点
         new_node = quicklistCreateNode();
         new_node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
         new_node->count++;
@@ -1011,6 +1017,7 @@ REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
     } else if (full) {
         /* else, node is full we need to split it. */
         /* covers both after and !after cases */
+        // 当前节点满了，并且是在节点中间插入（ziplist 中间插入），此时需要拆分节点
         D("\tsplitting node...");
         quicklistDecompressNodeForUse(node);
         new_node = _quicklistSplitNode(node, entry->offset, after);
