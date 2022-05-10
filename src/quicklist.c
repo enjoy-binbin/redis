@@ -356,10 +356,12 @@ REDIS_STATIC void __quicklistCompress(const quicklist *quicklist,
  * Insert 'new_node' before 'old_node' if 'after' is 0.
  * Note: 'new_node' is *always* uncompressed, so if we assign it to
  *       head or tail, we do not need to uncompress it. */
+// 将 new_node 节点插入到 old_node 节点的前面或者后面，new_node 节点不会压缩
 REDIS_STATIC void __quicklistInsertNode(quicklist *quicklist,
                                         quicklistNode *old_node,
                                         quicklistNode *new_node, int after) {
     if (after) {
+        // 新节点插入到老节点后面
         new_node->prev = old_node;
         if (old_node) {
             new_node->next = old_node->next;
@@ -519,23 +521,32 @@ REDIS_STATIC int _quicklistNodeAllowMerge(const quicklistNode *a,
  *
  * Returns 0 if used existing head.
  * Returns 1 if new head created. */
+// 往快速列表头部插入一个新 entry
+// 如果是在头节点中插入的，返回 0；如果是创建了一个新头节点插入的，返回 1
 int quicklistPushHead(quicklist *quicklist, void *value, size_t sz) {
+    // 记录下原始 quicklist 的头节点
     quicklistNode *orig_head = quicklist->head;
-    assert(sz < UINT32_MAX); /* TODO: add support for quicklist nodes that are sds encoded (not zipped) */
-    if (likely(
-            _quicklistNodeAllowInsert(quicklist->head, quicklist->fill, sz))) {
-        quicklist->head->zl =
-            ziplistPush(quicklist->head->zl, value, sz, ZIPLIST_HEAD);
+    // 溢出检查
+    assert(sz < UINT32_MAX);
+    if (likely(_quicklistNodeAllowInsert(quicklist->head, quicklist->fill, sz))) {
+        // 如果头节点能够插入新 entry，调用 ziplistPush 往头节点的 ziplist 里的头部插入
+        quicklist->head->zl = ziplistPush(quicklist->head->zl, value, sz, ZIPLIST_HEAD);
+        // 更新 node->sz 信息，O(1) 时间复杂度获取 ziplist 的 zlbytes 值
         quicklistNodeUpdateSz(quicklist->head);
     } else {
+        // 不能在头节点里插入，则创建一个新的节点，在新节点中插入 entry
         quicklistNode *node = quicklistCreateNode();
+        // 创建新的 ziplist 往里面插入数据，然后维护 node-zl 指针
         node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
-
+        // 更新 node->sz 信息，O(1) 时间复杂度获取 ziplist 的 zlbytes 值
         quicklistNodeUpdateSz(node);
+        // 将新节点作为新的头节点，插入到老头节点之前
         _quicklistInsertNodeBefore(quicklist, quicklist->head, node);
     }
+    // 维护相关的计数器
     quicklist->count++;
     quicklist->head->count++;
+    // 通过判断新旧头节点，返回是否有创建新头节点（个人觉得这一段函数逻辑可以简化）
     return (orig_head != quicklist->head);
 }
 
