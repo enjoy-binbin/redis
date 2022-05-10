@@ -690,18 +690,25 @@ REDIS_STATIC void __quicklistDelNode(quicklist *quicklist,
  *
  * Returns 1 if the entire node was deleted, 0 if node still exists.
  * Also updates in/out param 'p' with the next offset in the ziplist. */
+// 删除节点 ziplist p 位置的 entry，如果 entry 是节点中最后一个元素，即删除后节点变空，则删除节点
 REDIS_STATIC int quicklistDelIndex(quicklist *quicklist, quicklistNode *node,
                                    unsigned char **p) {
+    // 节点是否删除的标识，1 代表删除，0 代表没删除
     int gone = 0;
 
+    // 从 ziplist 里删除 p 指向的 zlentry
     node->zl = ziplistDelete(node->zl, p);
+    // entry 计数器减一
     node->count--;
     if (node->count == 0) {
+        // 删除 entry 后变成空节点了，删除它
         gone = 1;
         __quicklistDelNode(quicklist, node);
     } else {
+        // 更新 node-sz ziplist 总字节数
         quicklistNodeUpdateSz(node);
     }
+    // 更新 quicklist 总 entry 数
     quicklist->count--;
     /* If we deleted the node, the original node is no longer valid */
     return gone ? 1 : 0;
@@ -1542,19 +1549,22 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
 
     // 从对应节点的 ziplist 里的对应下标，获取 zlentry 的地址
     p = ziplistIndex(node->zl, pos);
+    // 将 p 对应位置的 zlentry 取出来，根据编码不同存储在不同的变量里
     if (ziplistGet(p, &vstr, &vlen, &vlong)) {
-        // 将
         if (vstr) {
+            // 字符串编码，调用特定函数将字符串保存在 data 中，将长度保存在 sz 中
             if (data)
                 *data = saver(vstr, vlen);
             if (sz)
                 *sz = vlen;
         } else {
+            // 整数编码，将整数值保存在 sval 中
             if (data)
                 *data = NULL;
             if (sval)
                 *sval = vlong;
         }
+        // 将对应的 zlentry 从 quicklist 中删除
         quicklistDelIndex(quicklist, node, &p);
         return 1;
     }
@@ -1562,9 +1572,11 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
 }
 
 /* Return a malloc'd copy of data passed in */
+// 将 data 的内容拷贝一份并且返回地址
 REDIS_STATIC void *_quicklistSaver(unsigned char *data, unsigned int sz) {
     unsigned char *vstr;
     if (data) {
+        // 分配空间 + 内存拷贝
         vstr = zmalloc(sz);
         memcpy(vstr, data, sz);
         return vstr;
