@@ -84,6 +84,7 @@ quicklistBookmark *_quicklistBookmarkFindByNode(quicklist *ql, quicklistNode *no
 void _quicklistBookmarkDelete(quicklist *ql, quicklistBookmark *bm);
 
 /* Simple way to give quicklistEntry structs default values with one call. */
+// 给 quicklistEntry 初始化默认值
 #define initEntry(e)                                                           \
     do {                                                                       \
         (e)->zi = (e)->value = NULL;                                           \
@@ -96,6 +97,8 @@ void _quicklistBookmarkDelete(quicklist *ql, quicklistBookmark *bm);
 
 /* Create a new quicklist.
  * Free with quicklistRelease(). */
+// 创建一个新的 quicklist，并初始化成员
+// 其中的 compress / fill 会在之后根据参数（配置项）再赋值
 quicklist *quicklistCreate(void) {
     struct quicklist *quicklist;
 
@@ -103,13 +106,17 @@ quicklist *quicklistCreate(void) {
     quicklist->head = quicklist->tail = NULL;
     quicklist->len = 0;
     quicklist->count = 0;
+    // 默认节点都不压缩
     quicklist->compress = 0;
+    // 默认每个 ziplist 字节数最大为 8Kb
     quicklist->fill = -2;
     quicklist->bookmark_count = 0;
     return quicklist;
 }
 
+// 最大压缩程度为 2**QL_COMP_BITS-1，因为 compress 长度为 QL_COMP_BITS 位（64 系统为 16）
 #define COMPRESS_MAX ((1 << QL_COMP_BITS)-1)
+// 设置 quicklist 的 compress，对边界进行一下处理
 void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
     if (compress > COMPRESS_MAX) {
         compress = COMPRESS_MAX;
@@ -119,28 +126,35 @@ void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
     quicklist->compress = compress;
 }
 
+// ziplist 最多节点数 2**QL_FILL_BITS-1，因为 fill 长度为 QL_FILL_BITS 位（64 系统为 16）
 #define FILL_MAX ((1 << (QL_FILL_BITS-1))-1)
+// 设置 quicklist 的 fill，对边界进行一下处理
 void quicklistSetFill(quicklist *quicklist, int fill) {
     if (fill > FILL_MAX) {
+        // 正值就代表单个 ziplist 中的 zlentry 节点数
         fill = FILL_MAX;
     } else if (fill < -5) {
+        // 负值就代表单个 ziplist 的字节大小，根据配置项最小是到 -5
         fill = -5;
     }
     quicklist->fill = fill;
 }
 
+// 根据参数设置 quicklist 的 fill 和 compress
 void quicklistSetOptions(quicklist *quicklist, int fill, int depth) {
     quicklistSetFill(quicklist, fill);
     quicklistSetCompressDepth(quicklist, depth);
 }
 
 /* Create a new quicklist with some default parameters. */
+// 创建一个新 quicklist 并且设置相关的默认参数
 quicklist *quicklistNew(int fill, int compress) {
     quicklist *quicklist = quicklistCreate();
     quicklistSetOptions(quicklist, fill, compress);
     return quicklist;
 }
 
+// 创建一个新 quicklistNode，并初始化
 REDIS_STATIC quicklistNode *quicklistCreateNode(void) {
     quicklistNode *node;
     node = zmalloc(sizeof(*node));
@@ -148,8 +162,11 @@ REDIS_STATIC quicklistNode *quicklistCreateNode(void) {
     node->count = 0;
     node->sz = 0;
     node->next = node->prev = NULL;
+    // 默认是没压缩的，编码格式为 RAW
     node->encoding = QUICKLIST_NODE_ENCODING_RAW;
+    // 默认使用 ziplist 作为容器存储数据
     node->container = QUICKLIST_NODE_CONTAINER_ZIPLIST;
+    // 设置没压缩标志
     node->recompress = 0;
     return node;
 }

@@ -143,11 +143,17 @@ typedef struct quicklist {
     quicklistBookmark bookmarks[];
 } quicklist;
 
+// quicklist 迭代器
 typedef struct quicklistIter {
+    // 当前迭代的 quicklist
     const quicklist *quicklist;
+    // 当前迭代的 quicklistNode
     quicklistNode *current;
+    // 当前迭代的 ziplist zlentry
     unsigned char *zi;
+    // 当前 zlentry 在 ziplist 的偏移量
     long offset; /* offset in current ziplist */
+    // 迭代方向
     int direction;
 } quicklistIter;
 
