@@ -58,6 +58,7 @@ static const size_t optimization_level[] = {4096, 8192, 16384, 32768, 65536};
 #define SIZE_SAFETY_LIMIT 8192
 
 /* Minimum ziplist size in bytes for attempting compression. */
+// 尝试压缩的最小 ziplist 字节大小，小于 48 字节的就没有必要压缩
 #define MIN_COMPRESS_BYTES 48
 
 /* Minimum size reduction in bytes to store compressed quicklistNode data.
@@ -172,45 +173,59 @@ REDIS_STATIC quicklistNode *quicklistCreateNode(void) {
 }
 
 /* Return cached quicklist count */
+// 返回 quicklist 所有元素数（所有 ziplist 的所有 zlentry 数）
 unsigned long quicklistCount(const quicklist *ql) { return ql->count; }
 
 /* Free entire quicklist. */
+// 释放 quicklist
 void quicklistRelease(quicklist *quicklist) {
     unsigned long len;
     quicklistNode *current, *next;
 
+    // 从头节点开始，一个节点一个节点进行回收
     current = quicklist->head;
     len = quicklist->len;
     while (len--) {
+        // 先记住后继节点
         next = current->next;
-
+        // 回收节点上对应的 ziplist
         zfree(current->zl);
+        // 维护 quicklist 的 count 所有元素总数
         quicklist->count -= current->count;
-
+        // 释放当前节点
         zfree(current);
-
+        // 维护 quicklist 的 len 节点数
         quicklist->len--;
+        // current 指向后继节点，处理下一个节点
         current = next;
     }
+    // 清理书签
     quicklistBookmarksClear(quicklist);
+    // 回收 quicklist
     zfree(quicklist);
 }
 
 /* Compress the ziplist in 'node' and update encoding details.
  * Returns 1 if ziplist compressed successfully.
  * Returns 0 if compression failed or if ziplist too small to compress. */
+// 对节点中的 ziplist 进行压缩，压缩成功返回 1
+// 压缩失败或者 ziplist 太小不压缩，返回 0
 REDIS_STATIC int __quicklistCompressNode(quicklistNode *node) {
 #ifdef REDIS_TEST
     node->attempted_compress = 1;
 #endif
 
     /* Don't bother compressing small values */
+    // 如果 ziplist 太小，小于 48 字节，没必要进行压缩
     if (node->sz < MIN_COMPRESS_BYTES)
         return 0;
 
+    // 先针对 sizeof(*lzf) + ziplist 的大小分配内存
     quicklistLZF *lzf = zmalloc(sizeof(*lzf) + node->sz);
 
     /* Cancel if compression fails or doesn't compress small enough */
+    // 如果 lzf_compress 返回 0 代表压缩失败，这种直接返回
+    // 或者 MIN_COMPRESS_IMPROVE: 8 最少要压缩多少（我猜同时也是 sizeof(*lzf) 的大小），如果压缩后大小反而更大，不压缩
     if (((lzf->sz = lzf_compress(node->zl, node->sz, lzf->compressed,
                                  node->sz)) == 0) ||
         lzf->sz + MIN_COMPRESS_IMPROVE >= node->sz) {
@@ -218,15 +233,20 @@ REDIS_STATIC int __quicklistCompressNode(quicklistNode *node) {
         zfree(lzf);
         return 0;
     }
+    // 根据压缩后的新 lzf-sz 对 lzf 重新分配内存空间（收缩）
     lzf = zrealloc(lzf, sizeof(*lzf) + lzf->sz);
+    // 释放掉原本节点的 ziplist
     zfree(node->zl);
+    // node->zl 此时指向的是压缩后的 lzf
     node->zl = (unsigned char *)lzf;
+    // 修改编码为 LZF 代表是进行了压缩
     node->encoding = QUICKLIST_NODE_ENCODING_LZF;
     node->recompress = 0;
     return 1;
 }
 
 /* Compress only uncompressed nodes. */
+// 尝试对节点进行压缩
 #define quicklistCompressNode(_node)                                           \
     do {                                                                       \
         if ((_node) && (_node)->encoding == QUICKLIST_NODE_ENCODING_RAW) {     \
@@ -236,25 +256,32 @@ REDIS_STATIC int __quicklistCompressNode(quicklistNode *node) {
 
 /* Uncompress the ziplist in 'node' and update encoding details.
  * Returns 1 on successful decode, 0 on failure to decode. */
+// 对节点进行解压，解压成功返回 1，解压失败返回 0
 REDIS_STATIC int __quicklistDecompressNode(quicklistNode *node) {
 #ifdef REDIS_TEST
     node->attempted_compress = 0;
 #endif
 
+    // 针对 ziplist 的大小分配内存，用于存放解压后的 ziplist
     void *decompressed = zmalloc(node->sz);
+    // 进行解压，将解压后的 ziplist 放到 decompressed
     quicklistLZF *lzf = (quicklistLZF *)node->zl;
     if (lzf_decompress(lzf->compressed, lzf->sz, decompressed, node->sz) == 0) {
         /* Someone requested decompress, but we can't decompress.  Not good. */
         zfree(decompressed);
         return 0;
     }
+    // 释放 lzf 之前压缩需要的内存
     zfree(lzf);
+    // node->zl 此时指向的是解压后的 ziplist
     node->zl = decompressed;
+    // 修改编码为 RAW 代表没进行压缩
     node->encoding = QUICKLIST_NODE_ENCODING_RAW;
     return 1;
 }
 
 /* Decompress only compressed nodes. */
+// 尝试对节点进行解压
 #define quicklistDecompressNode(_node)                                         \
     do {                                                                       \
         if ((_node) && (_node)->encoding == QUICKLIST_NODE_ENCODING_LZF) {     \
@@ -263,6 +290,7 @@ REDIS_STATIC int __quicklistDecompressNode(quicklistNode *node) {
     } while (0)
 
 /* Force node to not be immediately re-compresable */
+// 对节点进行解压，同时设置 recompress = 1，代表为了使用而解压，后面不进行压缩
 #define quicklistDecompressNodeForUse(_node)                                   \
     do {                                                                       \
         if ((_node) && (_node)->encoding == QUICKLIST_NODE_ENCODING_LZF) {     \
