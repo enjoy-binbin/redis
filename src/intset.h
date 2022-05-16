@@ -33,8 +33,11 @@
 #include <stdint.h>
 
 typedef struct intset {
+    // 数据编码，表示 intset 中每个整数是用几个字节来编码存储的
     uint32_t encoding;
+    // intset 中的元素个数，即 contents 数组长度，encoding 和 length 两个字段构成了 intset 的头部
     uint32_t length;
+    // 头部后紧跟着的柔性数组，存放着具体真正的整数数据项，数据项不重复，且是按照升序的（搜索的时候二分查找）
     int8_t contents[];
 } intset;
 
