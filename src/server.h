@@ -915,15 +915,27 @@ typedef struct clusterSlotToKeyMapping clusterSlotToKeyMapping;
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
+// 也就是我们用的一个个 db 数据库结构体，默认 0 - 15 号数据库
 typedef struct redisDb {
+    // 数据库键空间字典，保存着该 db 里所有的键值对，键为键名字符串对象，值为对应各种值对象（集合、哈希）
     dict *dict;                 /* The keyspace for this DB */
+    // 数据库过期字典，保存着该 db 所有有设置过期时间的键和过期实际，键为键名字符串对象，值为键的过期时间（unix 时间戳）
     dict *expires;              /* Timeout of keys with a timeout set */
+    // 正处于阻塞状态的键，用于 blpop 等阻塞场景，表示数据库中的某些键正在被阻塞着
+    // 其中字典键为对应阻塞的键，字典值是一个链表，里面存储着所有因为这个键阻塞的客户端
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
+    // 上面阻塞的键中，准备可以结束阻塞的键，字典键为键名，字典值为 NULL
+    // 这个字典其实主要就用于 O(1) 判断键是否存在，还有个 server.ready_keys，具体的参考 signalKeyAsReady 函数
     dict *ready_keys;           /* Blocked keys that received a PUSH */
+    // MULTI/EXEC 场景中 WATCHED 的键，字典键为键名，字典值为 WATCH 对应键的所有客户端
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
+    // 数据库 ID，例如 0 - 15
     int id;                     /* Database ID */
+    // 数据库里键的平均 ttl，用于统计信息 stats
     long long avg_ttl;          /* Average TTL, just for stats */
+    // 用户数据库过期键定期删除的游标
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
+    // 用于碎片整理相关的，是个列表，里面记录了需要进行碎片整理的所有键
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
     clusterSlotToKeyMapping *slots_to_keys; /* Array of slots to keys. Only used in cluster mode (db 0). */
 } redisDb;
