@@ -40,14 +40,20 @@
 /* ===================== Creation and parsing of objects ==================== */
 
 robj *createObject(int type, void *ptr) {
+    // 分配类型
     robj *o = zmalloc(sizeof(*o));
+    // 设置对象类型
     o->type = type;
+    // 编码方式需要在之后再修正更新
     o->encoding = OBJ_ENCODING_RAW;
+    // 赋值数据指针
     o->ptr = ptr;
+    // 引用计数为 1
     o->refcount = 1;
 
     /* Set the LRU to the current lruclock (minutes resolution), or
      * alternatively the LFU counter. */
+    // 根据 LRU 或者 LFU 策略设置 o->lru 属性
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
     } else {
@@ -60,13 +66,10 @@ robj *createObject(int type, void *ptr) {
  * incrRefCount and decrRefCount() will test for this special refcount
  * and will not touch the object. This way it is free to access shared
  * objects such as small integers from different threads without any
- * mutex.
- *
- * A common patter to create shared objects:
- *
- * robj *myobject = makeObjectShared(createObject(...));
- *
- */
+ * mutex. */
+// 将一个 robj 设置为共享对象，可以看到是直接设置 refcount 为 OBJ_SHARED_REFCOUNT
+// incrRefCount 和 decrRefCount 里都会检查这个特殊的 refcount
+// 这样在使用共享对象的时候，就不需要考虑任何互斥锁
 robj *makeObjectShared(robj *o) {
     serverAssert(o->refcount == 1);
     o->refcount = OBJ_SHARED_REFCOUNT;
