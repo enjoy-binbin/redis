@@ -341,7 +341,7 @@ ssize_t aofWrite(int fd, const char *buf, size_t len) {
 /* Write the append only file buffer on disk.
  *
  * Since we are required to write the AOF before replying to the client,
- * and the only way the client socket can get a write is entering when the
+ * and the only way the client socket can get a write is entering when
  * the event loop, we accumulate all the AOF writes in a memory
  * buffer and write it on disk using this function just before entering
  * the event loop again.
@@ -356,13 +356,33 @@ ssize_t aofWrite(int fd, const char *buf, size_t len) {
  *
  * However if force is set to 1 we'll write regardless of the background
  * fsync. */
+// 将内存中 aof buf 的内容写到硬盘上
+// 因为需要在回复客户端之前进行 AOF 写，唯一的途径是在事件循环中，因此累积所有的
+// aof_buf 到内存里，在下一次重新进入事件循环之前将缓存写到 AOF 文件里
+
+// force 参数，当 fsync 被设置为 everysec，如果当前时刻有后台线程在进行 fsync 操作
+// 我们可能会退出 flush 操作，因为 write 往正在 fsync 的文件写入，是阻塞的
+// 如果 force 被设置为 1，代表强制执行 flush，即无视后台 fsync 直接进行写
 #define AOF_WRITE_LOG_ERROR_RATE 30 /* Seconds between errors logging. */
 void flushAppendOnlyFile(int force) {
     ssize_t nwritten;
+    // 是否正在进行 fsync，如果是的话需要判断是否进行了两秒
     int sync_in_progress = 0;
     mstime_t latency;
 
+    // 如果缓冲区中没有数据，直接返回，见下面在 #6053 被改了
+    // if (sdslen(server.aof_buf) == 0) return;
+
     if (sdslen(server.aof_buf) == 0) {
+        // 这个会比较有意思：可以看完后面的部分再回来看这里，对应 PR #6053
+        // 当策略是 everysec 的时候，字面上意味着一秒会进行一次 fsync (bg)
+        // 有这样的情况，刚 fsync 完，此时进来一个写命令，但是时间没到一秒
+        // 此时再次调用本函数，aof_buf 会被清空，但是在尝试 fsync 的时候
+        // 由于时间限制，此时 everysec 的 bg fsync 是不会被执行的
+        // 但是 aof_buf 其实是被清空了，因为数据被 write(2) 进了 page cache
+        // 而原本的逻辑是 sdslen(aof_buf) 判断为 0 是会直接提前返回的，即不往后走
+        // 也就是后面函数执行进来不会再进行 fsync, 假如之后一直没有写命令进来，
+        // 那么这一秒内的数据就没有及时的 fsync 落盘（不满足 everysec 策略）
         /* Check if we need to do fsync even the aof buffer is empty,
          * because previously in AOF_FSYNC_EVERYSEC mode, fsync is
          * called only when aof buffer is not empty, so if users
@@ -378,26 +398,35 @@ void flushAppendOnlyFile(int force) {
         }
     }
 
+    // 检查 aof fsync 是否在后台执行中
+    // 当策略为 everysec，实际上是在子线程中进行 fsync (bg)
+    // 因为 write 和 fsync 作用于同一个 fd，write 会引发服务器阻塞，write 得等 fsync 完成
+    // 而 write 的操作是我们在主线程中执行的，显然是不能阻塞主线程，所以需要判断是否有正在进行 bg fsync
     if (server.aof_fsync == AOF_FSYNC_EVERYSEC)
         sync_in_progress = aofFsyncInProgress();
 
     if (server.aof_fsync == AOF_FSYNC_EVERYSEC && !force) {
+        // everysec 策略下，如果有正在执行的 bg fsync，会推迟本次的 flush (write + fsync)
         /* With this append fsync policy we do background fsyncing.
          * If the fsync is still in progress we can try to delay
          * the write for a couple of seconds. */
         if (sync_in_progress) {
             if (server.aof_flush_postponed_start == 0) {
+                // 如果目前有 bg fsync，且前面都没推迟过，这里就记录时间然后返回，推迟本轮 flush
                 /* No previous write postponing, remember that we are
                  * postponing the flush and return. */
                 server.aof_flush_postponed_start = server.unixtime;
                 return;
             } else if (server.unixtime - server.aof_flush_postponed_start < 2) {
+                // 如果目前有 bg fsync，且之前也有推迟，但是推迟的时间差小于 2s 也推迟本轮 flush
+                // 所以这边极端情况下，everysec 策略是有可能会丢失 2s 的数据
                 /* We were already waiting for fsync to finish, but for less
                  * than two seconds this is still ok. Postpone again. */
                 return;
             }
-            /* Otherwise fall trough, and go write since we can't wait
+            /* Otherwise fall through, and go write since we can't wait
              * over two seconds. */
+            // 其他情况下不能再等了，时间也超过了两秒，就算有 bg fsync 正在执行，也要进行 write，虽然 write 会被阻塞
             server.aof_delayed_fsync++;
             serverLog(LL_NOTICE,"Asynchronous AOF fsync is taking too long (disk is busy?). Writing the AOF buffer without waiting for fsync to complete, this may slow down Redis.");
         }
@@ -407,12 +436,15 @@ void flushAppendOnlyFile(int force) {
      * While this will save us against the server being killed I don't think
      * there is much to do about the whole server stopping for power problems
      * or alike */
+    // 会执行一次 write，这应该由文件系统来保证原子性，例如直接断电等其实软件层面没啥能做了
 
+    // 测试用的代码，flush 前睡一会，用于在测试用例里让主线程休眠一会
     if (server.aof_flush_sleep && sdslen(server.aof_buf)) {
         usleep(server.aof_flush_sleep);
     }
 
     latencyStartMonitor(latency);
+    // aofWrite 是包装调用 write ，将 aof_buf 里的内容 write 进 AOF 文件，返回写入的字节数，返回 -1 表示失败
     nwritten = aofWrite(server.aof_fd,server.aof_buf,sdslen(server.aof_buf));
     latencyEndMonitor(latency);
     /* We want to capture different events for delayed writes:
@@ -430,13 +462,16 @@ void flushAppendOnlyFile(int force) {
     latencyAddSampleIfNeeded("aof-write",latency);
 
     /* We performed the write so reset the postponed flush sentinel to zero. */
+    // 执行了 write，所以这边这个推迟 flush 的时间要置空
     server.aof_flush_postponed_start = 0;
 
     if (nwritten != (ssize_t)sdslen(server.aof_buf)) {
+        // 如果写入的字节数不等于 aof_buf 的长度，表示发生异常
         static time_t last_write_error_log = 0;
         int can_log = 0;
 
         /* Limit logging rate to 1 line per AOF_WRITE_LOG_ERROR_RATE seconds. */
+        // 限制打印日志的频率，默认每行 30s，避免打印无限多日志
         if ((server.unixtime - last_write_error_log) > AOF_WRITE_LOG_ERROR_RATE) {
             can_log = 1;
             last_write_error_log = server.unixtime;
@@ -444,12 +479,14 @@ void flushAppendOnlyFile(int force) {
 
         /* Log the AOF write error and record the error code. */
         if (nwritten == -1) {
+            // 当 nwritten == -1，代表一个字节没写入，写入失败打印错误日志
             if (can_log) {
                 serverLog(LL_WARNING,"Error writing to the AOF file: %s",
                     strerror(errno));
                 server.aof_last_write_errno = errno;
             }
         } else {
+            // 如果只写入了一部分，即发生了 short write
             if (can_log) {
                 serverLog(LL_WARNING,"Short write while writing to "
                                        "the AOF file: (nwritten=%lld, "
@@ -458,6 +495,8 @@ void flushAppendOnlyFile(int force) {
                                        (long long)sdslen(server.aof_buf));
             }
 
+            // ftruncate 裁剪指定的 fd 到指定大小（到原本的 aof 文件大小）
+            // 将追加的内容截断，即删除追加的内容，恢复原本的 aof 文件
             if (ftruncate(server.aof_fd, server.aof_current_size) == -1) {
                 if (can_log) {
                     serverLog(LL_WARNING, "Could not remove short write "
@@ -466,6 +505,7 @@ void flushAppendOnlyFile(int force) {
                              "ftruncate: %s", strerror(errno));
                 }
             } else {
+                // 裁剪成功，之前部分写入的数据就当做没写入，将 nwritten 置为 -1
                 /* If the ftruncate() succeeded we can set nwritten to
                  * -1 since there is no longer partial data into the AOF. */
                 nwritten = -1;
@@ -475,6 +515,7 @@ void flushAppendOnlyFile(int force) {
 
         /* Handle the AOF write error. */
         if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
+            // 当策略是 always 时，aof 写入失败或者只写了部分，因为使用的是 always，无法恢复这种写入错误，进程进行退出
             /* We can't recover when the fsync policy is ALWAYS since the reply
              * for the client is already in the output buffers (both writes and
              * reads), and the changes to the db can't be rolled back. Since we
@@ -483,20 +524,25 @@ void flushAppendOnlyFile(int force) {
             serverLog(LL_WARNING,"Can't recover from AOF write error when the AOF fsync policy is 'always'. Exiting...");
             exit(1);
         } else {
+            // 策略非 always 时，设置状态（拒绝客户端写请求直至 aof 恢复），数据依旧存储在 aof_buf
             /* Recover from failed write leaving data into the buffer. However
              * set an error to stop accepting writes as long as the error
              * condition is not cleared. */
             server.aof_last_write_status = C_ERR;
 
+            // 如果到这里 nwritten > 0 代表 write 写了部分且无法用 ftruncate 恢复原来的 AOF 文件
+            // 就修剪掉 aof_buf 写了的那部分，更新当前 AOF 文件大小，只能当作部分写入成功
             /* Trim the sds buffer if there was a partial write, and there
              * was no way to undo it with ftruncate(2). */
             if (nwritten > 0) {
                 server.aof_current_size += nwritten;
                 sdsrange(server.aof_buf,nwritten,-1);
             }
+            // 这次 write 并没有完全成功, 下次继续
             return; /* We'll try again on the next call... */
         }
     } else {
+        // 这次 write 成功，即写入的字节数跟 aof_buf 长度一致，如果有需要的话就更新状态
         /* Successful write(2). If AOF was in error state, restore the
          * OK state and log the event. */
         if (server.aof_last_write_status == C_ERR) {
@@ -505,8 +551,11 @@ void flushAppendOnlyFile(int force) {
             server.aof_last_write_status = C_OK;
         }
     }
+    // 维护 aof 文件的大小，加上前面写入成功的字节数（write 成功不代表数据实际落盘）
     server.aof_current_size += nwritten;
 
+    // 根据情况判断是否重用 aof_buf, 即判断缓冲区的大小 (sdslen + sdsavail)
+    // 如果足够小 (< 4000 字节) 就重用即清空它，否则释放它重新弄个新 sds
     /* Re-use AOF buffer when it is small enough. The maximum comes from the
      * arena size of 4k minus some overhead (but is otherwise arbitrary). */
     if ((sdslen(server.aof_buf)+sdsavail(server.aof_buf)) < 4000) {
@@ -516,7 +565,10 @@ void flushAppendOnlyFile(int force) {
         server.aof_buf = sdsempty();
     }
 
+// 这里就是实际执行 fsync 的地方，write 将数据写到文件里，但是不一定是有落盘
+// 在操作系统的缓冲区里，如果想要确保真的落盘到硬盘上，需要显式调用 fsync 进行数据刷盘
 try_fsync:
+    // 如果开启了 no-appendfsync-on-rewrite，不会在有子进程 (rdb aof_rewrite) 的时候 fsync
     /* Don't fsync if no-appendfsync-on-rewrite is set to yes and there are
      * children doing I/O in the background. */
     if (server.aof_no_fsync_on_rewrite && hasActiveChildProcess())
@@ -524,6 +576,7 @@ try_fsync:
 
     /* Perform the fsync if needed. */
     if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
+        // 如果策略是 always，则每次都是需要进行 fsync 的，而 fsync 错误直接退出进程
         /* redis_fsync is defined as fdatasync() for Linux in order to avoid
          * flushing metadata. */
         latencyStartMonitor(latency);
@@ -541,7 +594,9 @@ try_fsync:
         server.aof_last_fsync = server.unixtime;
     } else if ((server.aof_fsync == AOF_FSYNC_EVERYSEC &&
                 server.unixtime > server.aof_last_fsync)) {
+        // 如果策略是 everysec，每秒进行一次 fsync，当前时间要大于上一次执行 fsync 的时间
         if (!sync_in_progress) {
+            // 如果没有后台执行的 fsync，在子线程中进行 bg fsync
             aof_background_fsync(server.aof_fd);
             server.aof_fsync_offset = server.aof_current_size;
         }
