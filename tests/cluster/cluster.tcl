@@ -37,6 +37,17 @@ proc has_flag {node flag} {
     expr {[lsearch -exact [dict get $node flags] $flag] != -1}
 }
 
+proc get_non_noaddr_node_number id {
+    set node_number 0
+    set nodes [get_cluster_nodes $id]
+    foreach n $nodes {
+        if {![has_flag $n noaddr]} {
+            incr node_number
+        }
+    }
+    return $node_number
+}
+
 # Returns the parsed myself node entry as a dictionary.
 proc get_myself id {
     set nodes [get_cluster_nodes $id]

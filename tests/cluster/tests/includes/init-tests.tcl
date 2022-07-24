@@ -63,9 +63,23 @@ test "Cluster Join and auto-discovery test" {
 
     foreach_redis_id id {
         wait_for_condition 1000 50 {
-            [llength [get_cluster_nodes $id]] == [llength $ids]
+            [get_non_noaddr_node_number $id] == [llength $ids]
         } else {
+            set nodes [get_cluster_nodes $id]
+            puts $nodes
             fail "Cluster failed to join into a full mesh."
+        }
+    }
+}
+
+test "Forget those noaddr nodes" {
+    foreach_redis_id id {
+        set nodes [get_cluster_nodes $id]
+        foreach n $nodes {
+            if {[has_flag $n noaddr]} {
+                set myid [dict get $n id]
+                catch {R $id cluster forget forget $myid}
+            }
         }
     }
 }
