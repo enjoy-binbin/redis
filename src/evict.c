@@ -447,6 +447,8 @@ int freeMemoryIfNeeded(void) {
     int keys_freed = 0;
     /* By default replicas should ignore maxmemory
      * and just be masters exact copies. */
+    // 默认情况下，slave 是不会进行键驱逐的，即不关心 maxmemory，正常来说应该是
+    // 由 master 来进行键的驱逐，然后将键的 DEL 命令传播到 slave 来
     if (server.masterhost && server.repl_slave_ignore_maxmemory) return C_OK;
 
     size_t mem_reported, mem_tofree, mem_freed;
@@ -458,16 +460,22 @@ int freeMemoryIfNeeded(void) {
     /* When clients are paused the dataset should be static not just from the
      * POV of clients not being able to write, but also from the POV of
      * expires and evictions of keys not being performed. */
+    // 如果客户端是处于 paused 状态，此时数据对它来说都是静止的，直接返回
     if (clientsArePaused()) return C_OK;
+
+    // 判断内存使用情况，是否有超过了 maxmemory 配置的值，如果没超过就直接返回
+    // mem_tofree = mem_used - server.maxmemory 代表需要被释放的内存大小
     if (getMaxmemoryState(&mem_reported,NULL,&mem_tofree,NULL) == C_OK)
         return C_OK;
 
     mem_freed = 0;
 
     latencyStartMonitor(latency);
+    // 此时都是代表内存已经超限，需要进行键驱逐，如果设置了 noeviction 代表策略不允许驱逐
     if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION)
         goto cant_free; /* We need to free memory, but policy forbids. */
 
+    // 一个 while 循环，直到 mem_freed >= mem_tofree 即内存占用要回到 maxmemory 之下
     while (mem_freed < mem_tofree) {
         int j, k, i;
         static unsigned int next_db = 0;
@@ -477,9 +485,11 @@ int freeMemoryIfNeeded(void) {
         dict *dict;
         dictEntry *de;
 
+        // LRU / LFU / TTL 驱逐
         if (server.maxmemory_policy & (MAXMEMORY_FLAG_LRU|MAXMEMORY_FLAG_LFU) ||
             server.maxmemory_policy == MAXMEMORY_VOLATILE_TTL)
         {
+            // 键驱逐池
             struct evictionPoolEntry *pool = EvictionPoolLRU;
 
             while(bestkey == NULL) {
@@ -488,22 +498,28 @@ int freeMemoryIfNeeded(void) {
                 /* We don't want to make local-db choices when expiring keys,
                  * so to start populate the eviction pool sampling keys from
                  * every DB. */
+                // 每个数据库都会参与填充驱逐采样键
                 for (i = 0; i < server.dbnum; i++) {
                     db = server.db+i;
+                    // 根据键驱逐策略看是选择键空间字典还是过期字典作为键采样字典
                     dict = (server.maxmemory_policy & MAXMEMORY_FLAG_ALLKEYS) ?
                             db->dict : db->expires;
+                    // 字典里有数据才进行填充，函数会后面看
                     if ((keys = dictSize(dict)) != 0) {
                         evictionPoolPopulate(i, dict, db->dict, pool);
                         total_keys += keys;
                     }
                 }
+                // 没有键可以驱逐，跳出循环，后面 goto cant_free;
                 if (!total_keys) break; /* No keys to evict. */
 
                 /* Go backward from best to worst element to evict. */
+                // 从后开始往前遍历，驱逐效果是从最好到最坏，因为驱逐池里已经做好了这个事情
                 for (k = EVPOOL_SIZE-1; k >= 0; k--) {
                     if (pool[k].key == NULL) continue;
                     bestdbid = pool[k].dbid;
 
+                    // 根据驱逐策略从对应字典里取出需要驱逐的键
                     if (server.maxmemory_policy & MAXMEMORY_FLAG_ALLKEYS) {
                         de = dictFind(server.db[pool[k].dbid].dict,
                             pool[k].key);
@@ -513,6 +529,7 @@ int freeMemoryIfNeeded(void) {
                     }
 
                     /* Remove the entry from the pool. */
+                    // todo
                     if (pool[k].key != pool[k].cached)
                         sdsfree(pool[k].key);
                     pool[k].key = NULL;
@@ -520,6 +537,7 @@ int freeMemoryIfNeeded(void) {
 
                     /* If the key exists, is our pick. Otherwise it is
                      * a ghost and we need to try the next element. */
+                    // 找到了合适的键就 break 出去，后面会对键进行驱逐
                     if (de) {
                         bestkey = dictGetKey(de);
                         break;
@@ -531,17 +549,24 @@ int freeMemoryIfNeeded(void) {
         }
 
         /* volatile-random and allkeys-random policy */
+        // RANDOM 驱逐策略
         else if (server.maxmemory_policy == MAXMEMORY_ALLKEYS_RANDOM ||
                  server.maxmemory_policy == MAXMEMORY_VOLATILE_RANDOM)
         {
             /* When evicting a random key, we try to evict a key for
              * each DB, so we use the static 'next_db' variable to
              * incrementally visit all DBs. */
+            // 随机驱逐键，用静态变量 next_db 自增来确保每个 db 都能有键被驱逐，都会被照顾到
+            // ++next_db 会导致第一次从 db1 开始，实际上用 next_db++ 会更好，即从 db0 开始
+            // 另外这个会遍历到每个 db，看着貌似公平，但是感觉对小 db 是不公平的，因为键本身就少
+            // 基于整个实例来说，键数量也是相对最少，相对来说键会更容易被驱逐完
             for (i = 0; i < server.dbnum; i++) {
                 j = (++next_db) % server.dbnum;
                 db = server.db+j;
+                // 根据策略来选择看是键空间字典还是过期字典
                 dict = (server.maxmemory_policy == MAXMEMORY_ALLKEYS_RANDOM) ?
                         db->dict : db->expires;
+                // 如果字典里有数据，dictGetRandomKey 随机获取一个键进行驱逐
                 if (dictSize(dict) != 0) {
                     de = dictGetRandomKey(dict);
                     bestkey = dictGetKey(de);
@@ -552,9 +577,11 @@ int freeMemoryIfNeeded(void) {
         }
 
         /* Finally remove the selected key. */
+        // 对键进行删除
         if (bestkey) {
             db = server.db+bestdbid;
             robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
+            // 对键删除进行传播（主从或者 AOF） DEL or UNLINK
             propagateExpire(db,keyobj,server.lazyfree_lazy_eviction);
             /* We compute the amount of memory freed by db*Delete() alone.
              * It is possible that actually the memory needed to propagate
@@ -566,18 +593,34 @@ int freeMemoryIfNeeded(void) {
              *
              * AOF and Output buffer memory will be freed eventually so
              * we only care about memory used by the key space. */
+            // 只计算 dbAsyncDelete 或者 dbSyncDelete 释放的内存
+            // 因为在 replication 和 AOF 里进行 DEL 的传播，需要的内存可能会大于键删除时释放的内存
+            // 统计不能计算它们，不然的话这个循环可能永远退出不了
+            // signalModifiedKey 产生的内存消耗也是同理，所以不纳入计算
+            // AOF 和 复制输出缓冲区最终都会被释放，所以我们可以只关心键空间使用的内存
+
+            // delta 当前的内存使用量
             delta = (long long) zmalloc_used_memory();
             latencyStartMonitor(eviction_latency);
+            // 比较好奇如果是大键异步删除的话，有点时间差，那么主线程又很快进入下一轮驱逐
+            // 就会造成键多驱逐，不过在 OOM 情况下，都忙不过来了，也就无所谓有多几个键被额外驱逐
             if (server.lazyfree_lazy_eviction)
                 dbAsyncDelete(db,keyobj);
             else
                 dbSyncDelete(db,keyobj);
             latencyEndMonitor(eviction_latency);
             latencyAddSampleIfNeeded("eviction-del",eviction_latency);
+            // 进行键的删除后，重新计算一下，delta 最终的值就是键删除后释放出来的内存量
+            // 就只计算键删除后的内存变化，是因为我们需要去除像主从 / AOF / signal 这些操作额外产生的内存
+            // 不然的话，这个键驱逐循环可能永远停不下来，因为一减一加，而上面那些最终都是会被释放点，只关心键空间就好
             delta -= (long long) zmalloc_used_memory();
+
+            // 维护好一些其它东西
             mem_freed += delta;
             server.stat_evictedkeys++;
+            // 通知键被修改，主要用于 multi / tracking
             signalModifiedKey(NULL,db,keyobj);
+            // sub/pub 进行通知，这边事件是用的 evicted
             notifyKeyspaceEvent(NOTIFY_EVICTED, "evicted",
                 keyobj, db->id);
             decrRefCount(keyobj);
@@ -587,6 +630,9 @@ int freeMemoryIfNeeded(void) {
              * start spending so much time here that is impossible to
              * deliver data to the slaves fast enough, so we force the
              * transmission here inside the loop. */
+            // 避免说因为要释放的内存很多，然后主线程都花时间在这里（进入不到 eventLoop），造成主从延时
+            // 如果有从节点的话，这边每删除一个键，都尝试进行一下从输出缓冲区的刷新
+            // 实际上这边每删除一个键就处理一下，其实有点浪费，新版本里改成是 16 个键处理一次
             if (slaves) flushSlavesOutputBuffers();
 
             /* Normally our stop condition is the ability to release
@@ -596,6 +642,8 @@ int freeMemoryIfNeeded(void) {
              * memory, since the "mem_freed" amount is computed only
              * across the dbAsyncDelete() call, while the thread can
              * release the memory all the time. */
+            // 因为是有异步删除的，键是在另外个线程中进行删除的，而 mem_freed 的统计
+            // 此时就会有一点点时间差，这边判断 16 个键检查下内存消耗
             if (server.lazyfree_lazy_eviction && !(keys_freed % 16)) {
                 if (getMaxmemoryState(NULL,NULL,NULL,NULL) == C_OK) {
                     /* Let's satisfy our stop condition. */
