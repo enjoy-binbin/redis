@@ -3354,11 +3354,14 @@ int incrCommandStatsOnError(struct redisCommand *cmd, int flags) {
  */
 void call(client *c, int flags) {
     long long dirty;
+    // 缓存客户端原本的 flags
     uint64_t client_old_flags = c->flags;
     struct redisCommand *real_cmd = c->realcmd;
 
     /* Initialization: clear the flags that must be set by the command on
      * demand, and initialize the array for additional commands propagation. */
+    // 命令执行前重置传播控制标志，这些表示应该只能在命令执行过程中才设置，由于 call
+    // 函数是可以递归调用的，所以执行命令前需要先清除这些标识，命令执行过程才会真的加
     c->flags &= ~(CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
 
     /* Redis core is in charge of propagation when the first entry point
@@ -3382,6 +3385,10 @@ void call(client *c, int flags) {
 
     /* Update cache time, in case we have nested calls we want to
      * update only on the first call*/
+    // 只有 in_nested_call == 0 的时候，才会去更新缓存时间（节省系统调用）
+    // 因为 call 是可以递归调用的，将缓存时间在第一次调用的时候才更新，后面
+    // 进来的命令，执行中看到的时间就都是这个缓存时间，每次调用命令前 ++
+    //（Freeze time sampling during command execution, and scripts）
     if (server.in_nested_call++ == 0) {
         updateCachedTimeWithUs(0,call_timer);
     }
@@ -3390,6 +3397,7 @@ void call(client *c, int flags) {
     if (monotonicGetType() == MONOTONIC_CLOCK_HW)
         monotonic_start = getMonotonicUs();
 
+    // 执行命令，命令执行完 in_nested_call--
     c->cmd->proc(c);
     server.in_nested_call--;
 
@@ -3417,6 +3425,7 @@ void call(client *c, int flags) {
 
     /* After executing command, we will close the client after writing entire
      * reply if it is set 'CLIENT_CLOSE_AFTER_COMMAND' flag. */
+    // 执行完命令后关闭客户端，设置 close after reply 将在写完回复后关闭客户端
     if (c->flags & CLIENT_CLOSE_AFTER_COMMAND) {
         c->flags &= ~CLIENT_CLOSE_AFTER_COMMAND;
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
@@ -3424,12 +3433,18 @@ void call(client *c, int flags) {
 
     /* When EVAL is called loading the AOF we don't want commands called
      * from Lua to go into the slowlog or to populate statistics. */
+    // 如果正在加载 AOF 并且执行命令的是 Lua 脚本，则清除慢日志和命令统计这两个
+    // flags，即 Lua 脚本不会纳入慢日志，也不会进行命令统计
     if (server.loading && c->flags & CLIENT_SCRIPT)
         flags &= ~(CMD_CALL_SLOWLOG | CMD_CALL_STATS);
 
     /* If the caller is Lua, we want to force the EVAL caller to propagate
      * the script if the command flag or client flag are forcing the
      * propagation. */
+    // 如果执行的 c 是 Lua 脚本伪客户端，则将伪客户端的 flags 加到真实的客户端上去
+    // 在 Lua 脚本中调用 redis.call 函数时，Redis 会构建一个伪客户端来调用 call
+    // 并将真实的客户端记录到 server.script_caller 中去，Lua 脚本执行过程中，
+    // 给伪客户端加的这几个 flags，需要转移到真实客户端上去
     if (c->flags & CLIENT_SCRIPT && server.script_caller) {
         if (c->flags & CLIENT_FORCE_REPL)
             server.script_caller->flags |= CLIENT_FORCE_REPL;
@@ -3452,11 +3467,19 @@ void call(client *c, int flags) {
 
     /* Log the command into the Slow log if needed.
      * If the client is blocked we will handle slowlog when it is unblocked. */
+    // 如果需要的话，记录慢日志
     if ((flags & CMD_CALL_SLOWLOG) && !(c->flags & CLIENT_BLOCKED))
         slowlogPushCurrentCommand(c, real_cmd, duration);
 
     /* Send the command to clients in MONITOR mode if applicable.
      * Administrative commands are considered too dangerous to be shown. */
+    // 发送命令给 MONITOR，会跳过脚本相关的命令，例如 eval / fcall 等，因为这些命令
+    // 被标记为 SKIP_MONITOR，会在命令执行函数里，最前面调用 replicationFeedMonitors
+    // 发送给 monitor，要在脚本执行前，把 eval / fcall 等命令先发送过去
+    // 例如 eval "redis.call('set', 'key', 'value')" 0 在 monitor 里会是
+    // 1669539923.689848 [0 127.0.0.1:60542] "eval" "redis.call('set', 'key', 'value')" "0"
+    // 1669539923.689899 [0 lua] "set" "key" "value"
+    // 另外，ADMIN 相关的命令，考虑到安全性，不会发送给 MONITOR
     if (!(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN))) {
         robj **argv = c->original_argv ? c->original_argv : c->argv;
         int argc = c->original_argv ? c->original_argc : c->argc;
@@ -3481,6 +3504,9 @@ void call(client *c, int flags) {
      * We never propagate EXEC explicitly, it will be implicitly
      * propagated if needed (see propagatePendingCommands).
      * Also, module commands take care of themselves */
+    // 根据 propagate_flags，将命令记录到 AOF 文件或者复制到从服务器
+    // EXEC 命令不会显示传播，它会在 propagatePendingCommands 里被传播
+    // 同时，模块命令也不会进行传播，需要模块自己显式传播
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP &&
         c->cmd->proc != execCommand &&
@@ -3490,16 +3516,23 @@ void call(client *c, int flags) {
 
         /* Check if the command operated changes in the data set. If so
          * set for replication / AOF propagation. */
+        // dirty 改变了，说明命令修改了数据，需要增加 AOF REPL 标志
         if (dirty) propagate_flags |= (PROPAGATE_AOF|PROPAGATE_REPL);
 
         /* If the client forced AOF / replication of the command, set
          * the flags regardless of the command effects on the data set. */
+        // 如果客户端设置了 FORCE REPL / AOF，代表要强制传播，增加标志
+        // 例如在 FLUSHDB / FLUSHALL 命令里，清空的是空库，此时 7.0 里 dirty 是没有变化的
+        // 老版本里会 dirty++ 来触发这个传播，但是搞乱了 dirty 计数器，所以在 7.0 中
+        // 使用 forceCommandPropagation 来强制标识命令需要被传播
         if (c->flags & CLIENT_FORCE_REPL) propagate_flags |= PROPAGATE_REPL;
         if (c->flags & CLIENT_FORCE_AOF) propagate_flags |= PROPAGATE_AOF;
 
         /* However prevent AOF / replication propagation if the command
          * implementation called preventCommandPropagation() or similar,
          * or if we don't have the call() flags to do so. */
+        // 如果客户端有 PREVENT 相关的禁止传播的标志，就不进行传播
+        // PREVENT 相关的标志一般是用在 module 中，让模块可以控制命令是否传播
         if (c->flags & CLIENT_PREVENT_REPL_PROP ||
             !(flags & CMD_CALL_PROPAGATE_REPL))
                 propagate_flags &= ~PROPAGATE_REPL;
@@ -3509,12 +3542,17 @@ void call(client *c, int flags) {
 
         /* Call alsoPropagate() only if at least one of AOF / replication
          * propagation is needed. */
+        // server.also_propagate 里存放了一些需要额外进行传播的命令，在这边进行传播
+        // 例如命令执行过程中，遇到的 lazy free 或者 maxmemory 导致的键驱逐
+        // 这些会导致键被删除，此时会需要额外传播 delete 命令
         if (propagate_flags != PROPAGATE_NONE)
             alsoPropagate(c->db->id,c->argv,c->argc,propagate_flags);
     }
 
     /* Restore the old replication flags, since call() can be executed
      * recursively. */
+    // 命令执行前会清除 client 中的传播控制标志，如果本身有存在，则利用 client_old_flags
+    // 将它们重新赋值给 c->flags
     c->flags &= ~(CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
     c->flags |= client_old_flags &
         (CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
@@ -3523,6 +3561,7 @@ void call(client *c, int flags) {
      * make sure to remember the keys it fetched via this command. Scripting
      * works a bit differently, where if the scripts executes any read command, it
      * remembers all of the declared keys from the script. */
+    // 如果执行的是一个 READONLY 只读/查询命令，处理 6.0 加的 Tracking 机制
     if ((c->cmd->flags & CMD_READONLY) && (c->cmd->proc != evalRoCommand)
         && (c->cmd->proc != evalShaRoCommand) && (c->cmd->proc != fcallroCommand))
     {
@@ -3544,6 +3583,7 @@ void call(client *c, int flags) {
         server.stat_peak_memory = zmalloc_used;
 
     /* Do some maintenance job and cleanup */
+    // 命令执行后调用，处理一下善后
     afterCommand(c);
 
     /* Client pause takes effect after a transaction has finished. This needs
