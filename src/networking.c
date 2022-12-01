@@ -4215,6 +4215,7 @@ void killIOThreads(void) {
 
 void startThreadedIO(void) {
     serverAssert(server.io_threads_active == 0);
+    // 对所有的 io_threads_mutex 进行解析，并把 io_threads_active 设置为启用
     for (int j = 1; j < server.io_threads_num; j++)
         pthread_mutex_unlock(&io_threads_mutex[j]);
     server.io_threads_active = 1;
@@ -4223,10 +4224,14 @@ void startThreadedIO(void) {
 void stopThreadedIO(void) {
     /* We may have still clients with pending reads when this function
      * is called: handle them before stopping the threads. */
+    // 此时 server.clients_pending_read 中可能还有一些客户端在等待处理，停用前调用一下
     handleClientsWithPendingReadsUsingThreads();
     serverAssert(server.io_threads_active == 1);
+    // 锁住所有的 io_threads_mutex 加锁，这样 IO 线程，在 IOThreadMain 函数中，在处理
+    // 任务前的加锁，就会在这里的 mutex 给阻塞住
     for (int j = 1; j < server.io_threads_num; j++)
         pthread_mutex_lock(&io_threads_mutex[j]);
+    // 设置 io_threads_active 为停用状态
     server.io_threads_active = 0;
 }
 
@@ -4243,9 +4248,11 @@ int stopThreadedIOIfNeeded(void) {
     int pending = listLength(server.clients_pending_write);
 
     /* Return ASAP if IO threads are disabled (single threaded mode). */
+    // 如果 io_threads_num 数量为 1，只需要主线程，返回 1
     if (server.io_threads_num == 1) return 1;
 
     if (pending < (server.io_threads_num*2)) {
+        // 如果待处理客户端数量小于 server.io_threads_num*2，则停用 IO 线程
         if (server.io_threads_active) stopThreadedIO();
         return 1;
     } else {

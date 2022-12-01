@@ -3340,25 +3340,30 @@ int rdbLoad(char *filename, rdbSaveInfo *rsi, int rdbflags) {
  * This function covers the case of actual BGSAVEs. */
 static void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
     if (!bysignal && exitcode == 0) {
+        // bgsave 成功，重置一些变量
         serverLog(LL_NOTICE,
             "Background saving terminated with success");
         server.dirty = server.dirty - server.dirty_before_bgsave;
         server.lastsave = time(NULL);
         server.lastbgsave_status = C_OK;
     } else if (!bysignal && exitcode != 0) {
+        // bgsave 错误，设置 lastbgsave_status 为错误
         serverLog(LL_WARNING, "Background saving error");
         server.lastbgsave_status = C_ERR;
     } else {
+        // 到这边，bgsave 都是通过信号终止的，
         mstime_t latency;
 
         serverLog(LL_WARNING,
             "Background saving terminated by signal %d", bysignal);
         latencyStartMonitor(latency);
+        // 删除临时文件
         rdbRemoveTempFile(server.child_pid, 0);
         latencyEndMonitor(latency);
         latencyAddSampleIfNeeded("rdb-unlink-temp-file",latency);
         /* SIGUSR1 is whitelisted, so we have a way to kill a child without
          * triggering an error condition. */
+        // 这个就是前面 exitcode == SERVER_CHILD_NOERROR_RETVAL 的逻辑
         if (bysignal != SIGUSR1)
             server.lastbgsave_status = C_ERR;
     }
@@ -3397,9 +3402,11 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
     int type = server.rdb_child_type;
     switch(server.rdb_child_type) {
     case RDB_CHILD_TYPE_DISK:
+        // 有盘的 bgsave 处理
         backgroundSaveDoneHandlerDisk(exitcode,bysignal);
         break;
     case RDB_CHILD_TYPE_SOCKET:
+        // 无盘的 bgsave 处理，主要用在主从中，不传输 RDB 文件，通过 socket 传输 RDB 内容
         backgroundSaveDoneHandlerSocket(exitcode,bysignal);
         break;
     default:
@@ -3407,6 +3414,7 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
         break;
     }
 
+    // 重置一些变量
     server.rdb_child_type = RDB_CHILD_TYPE_NONE;
     server.rdb_save_time_last = time(NULL)-server.rdb_save_time_start;
     server.rdb_save_time_start = -1;

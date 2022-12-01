@@ -1084,16 +1084,19 @@ void checkChildrenDone(void) {
     int statloc = 0;
     pid_t pid;
 
+    // 通过调用 waitpid 函数来检查是否存在已结束的子进程，以前是用 wait3 函数
     if ((pid = waitpid(-1, &statloc, WNOHANG)) != 0) {
+        // 获取子进程的结束代码和中断信号，然后根据这些标志做不同的逻辑处理
         int exitcode = WIFEXITED(statloc) ? WEXITSTATUS(statloc) : -1;
         int bysignal = 0;
-
         if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
 
         /* sigKillChildHandler catches the signal and calls exit(), but we
          * must make sure not to flag lastbgsave_status, etc incorrectly.
          * We could directly terminate the child process via SIGUSR1
          * without handling it */
+        // 使用一个特殊的结束代码来标识：terminated without an error
+        // 无错误终止，例如用户通过 SIGUSR1 来杀掉子进程，不要触发错误保护
         if (exitcode == SERVER_CHILD_NOERROR_RETVAL) {
             bysignal = SIGUSR1;
             exitcode = 1;
@@ -1106,6 +1109,7 @@ void checkChildrenDone(void) {
                 strChildType(server.child_type),
                 (int) server.child_pid);
         } else if (pid == server.child_pid) {
+            // 根据不同的子进程类型，调用不同的函数处理
             if (server.child_type == CHILD_TYPE_RDB) {
                 backgroundSaveDoneHandler(exitcode, bysignal);
             } else if (server.child_type == CHILD_TYPE_AOF) {
@@ -1127,6 +1131,7 @@ void checkChildrenDone(void) {
         }
 
         /* start any pending forks immediately. */
+        // 检查主从复制里是否有待处理的 bgsave
         replicationStartPendingFork();
     }
 }
