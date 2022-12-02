@@ -2668,6 +2668,8 @@ static sds getConfigDirOption(standardConfig *config) {
 static int setConfigSaveOption(standardConfig *config, sds *argv, int argc, const char **err) {
     UNUSED(config);
     int j;
+    int before_save_enabled = server.saveparamslen != 0;
+    serverLog(LL_WARNING, "before_save_enabled: %d", before_save_enabled);
 
     /* Special case: treat single arg "" as zero args indicating empty save configuration */
     if (argc == 1 && !strcasecmp(argv[0],"")) {
@@ -2715,6 +2717,14 @@ static int setConfigSaveOption(standardConfig *config, sds *argv, int argc, cons
         seconds = strtoll(argv[j],NULL,10);
         changes = strtoll(argv[j+1],NULL,10);
         appendServerSaveParams(seconds, changes);
+    }
+
+    int after_save_enabled = server.saveparamslen != 0;
+    serverLog(LL_WARNING, "after_save_enabled: %d", after_save_enabled);
+
+    if (!before_save_enabled && after_save_enabled) {
+        /* start a bgsave if needed */
+        server.rdb_bgsave_scheduled = 1;
     }
 
     return 1;
