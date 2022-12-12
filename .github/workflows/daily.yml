@@ -6,7 +6,8 @@ on:
       # any PR to a release branch.
       - '[0-9].[0-9]'
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 */1 * * *'
+    - cron: '0 */3 * * *'
   workflow_dispatch:
     inputs:
       skipjobs:
@@ -23,7 +24,7 @@ on:
         default: ''
       use_repo:
         description: 'repo owner and name'
-        default: 'redis/redis'
+        default: 'enjoy-binbin/redis'
       use_git_ref:
         description: 'git branch or sha to use'
         default: 'unstable'
@@ -34,7 +35,7 @@ jobs:
   test-ubuntu-jemalloc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'ubuntu')
     timeout-minutes: 14400
     steps:
@@ -118,7 +119,7 @@ jobs:
   test-ubuntu-libc-malloc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'malloc')
     timeout-minutes: 14400
     steps:
@@ -155,7 +156,7 @@ jobs:
   test-ubuntu-no-malloc-usable-size:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'malloc')
     timeout-minutes: 14400
     steps:
@@ -192,7 +193,7 @@ jobs:
   test-ubuntu-32bit:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, '32bit')
     timeout-minutes: 14400
     steps:
@@ -236,7 +237,7 @@ jobs:
   test-ubuntu-tls:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'tls')
     timeout-minutes: 14400
     steps:
@@ -280,7 +281,7 @@ jobs:
   test-ubuntu-tls-no-tls:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'tls')
     timeout-minutes: 14400
     steps:
@@ -324,7 +325,7 @@ jobs:
   test-ubuntu-io-threads:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'iothreads')
     timeout-minutes: 14400
     steps:
@@ -434,8 +435,8 @@ jobs:
   test-valgrind-test:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
-      !contains(github.event.inputs.skipjobs, 'valgrind') && !contains(github.event.inputs.skiptests, 'redis')
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
+      !contains(github.event.inputs.skipjobs, 'valgrind') && !contains(github.event.inputs.skiptests, 'redis') && github.event.schedule != '0 */1 * * *'
     timeout-minutes: 14400
     steps:
     - name: prep
@@ -464,8 +465,8 @@ jobs:
   test-valgrind-misc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
-      !contains(github.event.inputs.skipjobs, 'valgrind') && !(contains(github.event.inputs.skiptests, 'modules') && contains(github.event.inputs.skiptests, 'unittest'))
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
+      !contains(github.event.inputs.skipjobs, 'valgrind') && !(contains(github.event.inputs.skiptests, 'modules') && contains(github.event.inputs.skiptests, 'unittest')) && github.event.schedule != '0 */1 * * *'
     timeout-minutes: 14400
     steps:
     - name: prep
@@ -499,8 +500,8 @@ jobs:
   test-valgrind-no-malloc-usable-size-test:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
-      !contains(github.event.inputs.skipjobs, 'valgrind') && !contains(github.event.inputs.skiptests, 'redis')
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
+      !contains(github.event.inputs.skipjobs, 'valgrind') && !contains(github.event.inputs.skiptests, 'redis') && github.event.schedule != '0 */1 * * *'
     timeout-minutes: 14400
     steps:
     - name: prep
@@ -529,8 +530,8 @@ jobs:
   test-valgrind-no-malloc-usable-size-misc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
-      !contains(github.event.inputs.skipjobs, 'valgrind') && !(contains(github.event.inputs.skiptests, 'modules') && contains(github.event.inputs.skiptests, 'unittest'))
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
+      !contains(github.event.inputs.skipjobs, 'valgrind') && !(contains(github.event.inputs.skiptests, 'modules') && contains(github.event.inputs.skiptests, 'unittest')) && github.event.schedule != '0 */1 * * *'
     timeout-minutes: 14400
     steps:
     - name: prep
@@ -564,7 +565,7 @@ jobs:
   test-sanitizer-address:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'sanitizer')
     timeout-minutes: 14400
     strategy:
@@ -611,7 +612,7 @@ jobs:
   test-sanitizer-undefined:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'sanitizer')
     timeout-minutes: 14400
     strategy:
@@ -658,7 +659,7 @@ jobs:
   test-centos7-jemalloc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'centos')
     container: centos:7
     timeout-minutes: 14400
@@ -698,7 +699,7 @@ jobs:
   test-centos7-tls-module:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'tls')
     container: centos:7
     timeout-minutes: 14400
@@ -745,7 +746,7 @@ jobs:
   test-centos7-tls-module-no-tls:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'tls')
     container: centos:7
     timeout-minutes: 14400
@@ -792,7 +793,7 @@ jobs:
   test-macos-latest:
     runs-on: macos-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'macos') && !(contains(github.event.inputs.skiptests, 'redis') && contains(github.event.inputs.skiptests, 'modules'))
     timeout-minutes: 14400
     steps:
@@ -821,7 +822,7 @@ jobs:
   test-macos-latest-sentinel:
     runs-on: macos-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'macos') && !contains(github.event.inputs.skiptests, 'sentinel')
     timeout-minutes: 14400
     steps:
@@ -847,7 +848,7 @@ jobs:
   test-macos-latest-cluster:
     runs-on: macos-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'macos') && !contains(github.event.inputs.skiptests, 'cluster')
     timeout-minutes: 14400
     steps:
@@ -873,7 +874,7 @@ jobs:
   test-freebsd:
     runs-on: macos-12
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'freebsd') && !(contains(github.event.inputs.skiptests, 'redis') && contains(github.event.inputs.skiptests, 'modules'))
     timeout-minutes: 14400
     steps:
@@ -905,7 +906,7 @@ jobs:
   test-freebsd-sentinel:
     runs-on: macos-12
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'freebsd') && !contains(github.event.inputs.skiptests, 'sentinel')
     timeout-minutes: 14400
     steps:
@@ -936,7 +937,7 @@ jobs:
   test-freebsd-cluster:
     runs-on: macos-12
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'freebsd') && !contains(github.event.inputs.skiptests, 'cluster')
     timeout-minutes: 14400
     steps:
@@ -967,7 +968,7 @@ jobs:
   test-alpine-jemalloc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'alpine')
     container: alpine:latest
     steps:
@@ -1006,7 +1007,7 @@ jobs:
   test-alpine-libc-malloc:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'enjoy-binbin/redis')) &&
       !contains(github.event.inputs.skipjobs, 'alpine')
     container: alpine:latest
     steps:
