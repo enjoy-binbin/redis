@@ -426,6 +426,11 @@ int string2ll(const char *s, size_t slen, long long *value) {
         if (value != NULL) *value = 0;
         return 1;
     }
+    /* Special case: first is the negative sign, and the second is 0. */
+    if (slen == 2 && p[0] == '-' && p[1] == '0') {
+        if (value != NULL) *value = 0;
+        return 1;
+    }
 
     /* Handle negative numbers: just set a flag and continue like if it
      * was a positive number. Later convert into negative. */
@@ -1136,6 +1141,10 @@ static void test_string2ll(void) {
     assert(v == -1);
 
     redis_strlcpy(buf,"0",sizeof(buf));
+    assert(string2ll(buf,strlen(buf),&v) == 1);
+    assert(v == 0);
+
+    redis_strlcpy(buf,"-0",sizeof(buf));
     assert(string2ll(buf,strlen(buf),&v) == 1);
     assert(v == 0);
 
