@@ -788,6 +788,9 @@ void keysCommand(client *c) {
         }
         if (c->flags & CLIENT_CLOSE_ASAP)
             break;
+
+        if (numkeys >= server.limit_loop_count)
+            break;
     }
     dictReleaseIterator(di);
     setDeferredArrayLen(c,replylen,numkeys);

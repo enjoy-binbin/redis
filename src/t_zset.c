@@ -4134,6 +4134,8 @@ void zrandmemberWithCountCommand(client *c, long l, int withscores) {
         return;
     }
 
+    if (count >= server.limit_loop_count) count = server.limit_loop_count;
+
     /* CASE 1: The count was negative, so the extraction method is just:
      * "return N random elements" sampling the whole set every time.
      * This case is trivial and can be served without auxiliary data

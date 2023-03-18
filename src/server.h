@@ -1916,6 +1916,7 @@ struct redisServer {
     int sort_alpha;
     int sort_bypattern;
     int sort_store;
+    unsigned long limit_loop_count;
     /* Zip structure config, see redis.conf for more information  */
     size_t hash_max_listpack_entries;
     size_t hash_max_listpack_value;
