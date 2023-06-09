@@ -969,7 +969,10 @@ static void cliOutputGenericHelp(void) {
         "      \"help @<group>\" to get a list of commands in <group>\n"
         "      \"help <command>\" for help on <command>\n"
         "      \"help <tab>\" to get a list of possible help topics\n"
-        "      \"quit\" to exit\n"
+        "\n"
+        "Commands used only in redis-cli:\n"
+        "      \"restart\" or \"exit\" to exit\n"
+        "      \"quit\" or \"exit\" to exit\n"
         "\n"
         "To set redis-cli preferences:\n"
         "      \":set hints\" enable online hints\n"
@@ -3412,7 +3415,12 @@ static void repl(void) {
                     printf("Use 'restart' only in Lua debugging mode.\n");
                     fflush(stdout);
                 }
-            } else if (argc == 3 && !strcasecmp(argv[0],"connect")) {
+            } else if (strcasecmp(argv[0], "connect") == 0) {
+                if (argc != 3) {
+                    printf("wrong number of arguments for 'connect' command.\n");
+                    fflush(stdout);
+                    continue;
+                }
                 sdsfree(config.conn_info.hostip);
                 config.conn_info.hostip = sdsnew(argv[1]);
                 config.conn_info.hostport = atoi(argv[2]);
