@@ -326,7 +326,8 @@ void handleClientsBlockedOnKeys(void) {
     serverAssert(server.also_propagate.numops == 0);
 
     /* Avoid loops that constantly access the global server.ready_keys. */
-    if (listLength(server.ready_keys) != 0) {
+    // if (listLength(server.ready_keys) != 0) {
+    while(listLength(server.ready_keys) != 0) {
         list *l;
 
         /* Point server.ready_keys to a fresh list and save the current one
@@ -567,8 +568,9 @@ static void handleClientsBlockedOnKey(readyList *rl) {
 
         /* Only do count loops to avoid getting stuck in an endless loop. Because
          * XREADGROUP with ">" may repeatedly reprocess command and blockForKeys. */
-        long count = listLength(clients);
-        while ((ln = listNext(&li)) && count--) {
+//        long count = listLength(clients);
+//        while ((ln = listNext(&li)) && count--) {
+        while((ln = listNext(&li))) {
             client *receiver = listNodeValue(ln);
             robj *o = lookupKeyReadWithFlags(rl->db, rl->key, LOOKUP_NOEFFECTS);
             /* 1. In case new key was added/touched we need to verify it satisfy the
