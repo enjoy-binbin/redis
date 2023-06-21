@@ -805,15 +805,15 @@ void configSetCommand(client *c) {
     const char *errstr = NULL;
     const char *invalid_arg_name = NULL;
     const char *err_arg_name = NULL;
-    standardConfig **set_configs; /* TODO: make this a dict for better performance */
+    standardConfig **set_configs = NULL; /* TODO: make this a dict for better performance */
     list *module_configs_apply;
-    const char **config_names;
-    sds *new_values;
+    const char **config_names = NULL;
+    sds *new_values = NULL;
     sds *old_values = NULL;
-    apply_fn *apply_fns; /* TODO: make this a set for better performance */
+    apply_fn *apply_fns = NULL; /* TODO: make this a set for better performance */
     int config_count, i, j;
     int invalid_args = 0, deny_loading_error = 0;
-    int *config_map_fns;
+    int *config_map_fns = NULL;
 
     /* Make sure we have an even number of arguments: conf-val pairs */
     if (c->argc & 1) {
@@ -822,13 +822,20 @@ void configSetCommand(client *c) {
     }
     config_count = (c->argc - 2) / 2;
 
+    set_configs = ztrycalloc(sizeof(standardConfig*)*config_count);
+    if (!set_configs) goto alloc_failed;
+    config_names = ztrycalloc(sizeof(char*)*config_count);
+    if (!config_names) goto alloc_failed;
+    new_values = ztrymalloc(sizeof(sds*)*config_count);
+    if (!new_values) goto alloc_failed;
+    old_values = ztrycalloc(sizeof(sds*)*config_count);
+    if (!old_values) goto alloc_failed;
+    apply_fns = ztrycalloc(sizeof(apply_fn)*config_count);
+    if (!apply_fns) goto alloc_failed;
+    config_map_fns = ztrymalloc(sizeof(int)*config_count);
+    if (!config_map_fns) goto alloc_failed;
+
     module_configs_apply = listCreate();
-    set_configs = zcalloc(sizeof(standardConfig*)*config_count);
-    config_names = zcalloc(sizeof(char*)*config_count);
-    new_values = zmalloc(sizeof(sds*)*config_count);
-    old_values = zcalloc(sizeof(sds*)*config_count);
-    apply_fns = zcalloc(sizeof(apply_fn)*config_count);
-    config_map_fns = zmalloc(sizeof(int)*config_count);
 
     /* Find all relevant configs */
     for (i = 0; i < config_count; i++) {
@@ -961,6 +968,17 @@ end:
     zfree(apply_fns);
     zfree(config_map_fns);
     listRelease(module_configs_apply);
+    return;
+
+alloc_failed:
+    if (set_configs) zfree(set_configs);
+    if (config_names) zfree(config_names);
+    if (new_values) zfree(new_values);
+    if (old_values) zfree(old_values);
+    if (apply_fns) zfree(apply_fns);
+    if (config_map_fns) zfree(config_names);
+    addReplyError(c, "Insufficient memory, failed allocating transient memory for CONFIG SET");
+    return;
 }
 
 /*-----------------------------------------------------------------------------

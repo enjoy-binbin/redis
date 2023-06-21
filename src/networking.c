@@ -2376,7 +2376,13 @@ int processMultibulkBuffer(client *c) {
             /* Check if we have space in argv, grow if needed */
             if (c->argc >= c->argv_len) {
                 c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len*2 : INT_MAX, c->argc+c->multibulklen);
-                c->argv = zrealloc(c->argv, sizeof(robj*)*c->argv_len);
+                robj **new_argv = ztryrealloc(c->argv, sizeof(robj*)*c->argv_len);
+                if (new_argv == NULL) {
+                    addReplyError(c, "Insufficient memory, failed allocating transient memory for argv array");
+                    c->flags |= CLIENT_CLOSE_AFTER_REPLY;
+                    return C_ERR;
+                }
+                c->argv = new_argv;
             }
 
             /* Optimization: if a non-master client's buffer contains JUST our bulk element
