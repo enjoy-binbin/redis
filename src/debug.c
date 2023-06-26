@@ -995,6 +995,10 @@ NULL
     {
         server.pause_cron = atoi(c->argv[2]->ptr);
         addReply(c,shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr,"pause-beforesleep") && c->argc == 3)
+    {
+        server.pause_beforesleep = atoi(c->argv[2]->ptr);
+        addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"replybuffer") && c->argc == 4 ) {
         if(!strcasecmp(c->argv[2]->ptr, "peak-reset-time")) {
             if (!strcasecmp(c->argv[3]->ptr, "never")) {
