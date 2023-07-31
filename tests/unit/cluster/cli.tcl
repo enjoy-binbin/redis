@@ -2,22 +2,6 @@
 
 source tests/support/cli.tcl
 
-proc cluster_info {r field} {
-    if {[regexp "^$field:(.*?)\r\n" [$r cluster info] _ value]} {
-        set _ $value
-    }
-}
-
-# Provide easy access to CLUSTER INFO properties. Same semantic as "proc s".
-proc csi {args} {
-    set level 0
-    if {[string is integer [lindex $args 0]]} {
-        set level [lindex $args 0]
-        set args [lrange $args 1 end]
-    }
-    cluster_info [srv $level "client"] [lindex $args 0]
-}
-
 # make sure the test infra won't use SELECT
 set old_singledb $::singledb
 set ::singledb 1
@@ -26,7 +10,7 @@ set ::singledb 1
 tags {tls:skip external:skip cluster} {
 
 # start three servers
-set base_conf [list cluster-enabled yes cluster-node-timeout 1]
+set base_conf [list cluster-enabled yes cluster-node-timeout 1000]
 start_multiple_servers 3 [list overrides $base_conf] {
 
     set node1 [srv 0 client]
@@ -42,9 +26,9 @@ start_multiple_servers 3 [list overrides $base_conf] {
                            127.0.0.1:[srv -2 port]
 
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {ok} &&
-            [csi -1 cluster_state] eq {ok} &&
-            [csi -2 cluster_state] eq {ok}
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
@@ -80,10 +64,16 @@ start_multiple_servers 3 [list overrides $base_conf] {
     }
 
     test "Wait for cluster to be stable" {
-       wait_for_condition 1000 50 {
-            [catch {exec src/redis-cli --cluster \
-            check 127.0.0.1:[srv 0 port] \
-            }] == 0
+        # Cluster check just verifies the the config state is self-consistent,
+        # waiting for cluster_state to be okay is an independent check that all the
+        # nodes actually believe each other are healthy, prevent cluster down error.
+        wait_for_condition 1000 50 {
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv 0 port]}] == 0 &&
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv -1 port]}] == 0 &&
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv -2 port]}] == 0 &&
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
@@ -110,7 +100,7 @@ start_multiple_servers 3 [list overrides $base_conf] {
     }
 
     $node3_rd close
-    
+
     test "Run blocking command again on cluster node1" {
         $node1 del key9184688
         # key9184688 is mapped to slot 10923 which has been moved to node1
@@ -123,19 +113,19 @@ start_multiple_servers 3 [list overrides $base_conf] {
             fail "Client not blocked"
         }
     }
-    
+
      test "Kill a cluster node and wait for fail state" {
-        # kill node3 in cluster 
+        # kill node3 in cluster
         exec kill -SIGSTOP $node3_pid
 
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {fail} &&
-            [csi -1 cluster_state] eq {fail}
+            [CI 0 cluster_state] eq {fail} &&
+            [CI 1 cluster_state] eq {fail}
         } else {
             fail "Cluster doesn't fail"
         }
     }
-    
+
      test "Verify command got unblocked after cluster failure" {
         assert_error {*CLUSTERDOWN*} {$node1_rd read}
 
@@ -164,39 +154,45 @@ start_multiple_servers 5 [list overrides $base_conf] {
 
 
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {ok} &&
-            [csi -1 cluster_state] eq {ok} &&
-            [csi -2 cluster_state] eq {ok}
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
 
         # upload a function to all the cluster
         exec src/redis-cli --cluster-yes --cluster call 127.0.0.1:[srv 0 port] \
-                           FUNCTION LOAD LUA TEST {redis.register_function('test', function() return 'hello' end)}
+                           FUNCTION LOAD {#!lua name=TEST
+                               redis.register_function('test', function() return 'hello' end)
+                           }
 
         # adding node to the cluster
         exec src/redis-cli --cluster-yes --cluster add-node \
                        127.0.0.1:[srv -3 port] \
                        127.0.0.1:[srv 0 port]
 
+        wait_for_cluster_size 4
+
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {ok} &&
-            [csi -1 cluster_state] eq {ok} &&
-            [csi -2 cluster_state] eq {ok} &&
-            [csi -3 cluster_state] eq {ok}
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
 
         # make sure 'test' function was added to the new node
-        assert_equal {{library_name TEST engine LUA description {} functions {{name test description {} flags {}}}}} [$node4_rd FUNCTION LIST]
+        assert_equal {{library_name TEST engine LUA functions {{name test description {} flags {}}}}} [$node4_rd FUNCTION LIST]
 
         # add function to node 5
-        assert_equal {OK} [$node5_rd FUNCTION LOAD LUA TEST {redis.register_function('test', function() return 'hello' end)}]
+        assert_equal {TEST} [$node5_rd FUNCTION LOAD {#!lua name=TEST
+            redis.register_function('test', function() return 'hello' end)
+        }]
 
         # make sure functions was added to node 5
-        assert_equal {{library_name TEST engine LUA description {} functions {{name test description {} flags {}}}}} [$node5_rd FUNCTION LIST]
+        assert_equal {{library_name TEST engine LUA functions {{name test description {} flags {}}}}} [$node5_rd FUNCTION LIST]
 
         # adding node 5 to the cluster should failed because it already contains the 'test' function
         catch {
@@ -204,7 +200,7 @@ start_multiple_servers 5 [list overrides $base_conf] {
                         127.0.0.1:[srv -4 port] \
                         127.0.0.1:[srv 0 port]
         } e
-        assert_match {*node already contains functions*} $e        
+        assert_match {*node already contains functions*} $e
     }
 } ;# stop servers
 
@@ -220,9 +216,9 @@ test {Migrate the last slot away from a node using redis-cli} {
                            127.0.0.1:[srv -2 port]
 
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {ok} &&
-            [csi -1 cluster_state] eq {ok} &&
-            [csi -2 cluster_state] eq {ok}
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
@@ -235,12 +231,15 @@ test {Migrate the last slot away from a node using redis-cli} {
         exec src/redis-cli --cluster-yes --cluster add-node \
                      127.0.0.1:[srv -3 port] \
                      127.0.0.1:[srv 0 port]
-
+        
+        # First we wait for new node to be recognized by entire cluster
+        wait_for_cluster_size 4
+        
         wait_for_condition 1000 50 {
-            [csi 0 cluster_state] eq {ok} &&
-            [csi -1 cluster_state] eq {ok} &&
-            [csi -2 cluster_state] eq {ok} &&
-            [csi -3 cluster_state] eq {ok}
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok}
         } else {
             fail "Cluster doesn't stabilize"
         }
@@ -264,6 +263,21 @@ test {Migrate the last slot away from a node using redis-cli} {
         assert_equal OK [$newnode_r CLUSTER SETSLOT $slot NODE $newnode_id]
         assert_equal OK [$owner_r CLUSTER SETSLOT $slot NODE $newnode_id]
 
+        # Using --cluster check make sure we won't get `Not all slots are covered by nodes`.
+        # Wait for the cluster to become stable make sure the cluster is up during MIGRATE.
+        wait_for_condition 1000 50 {
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv 0 port]}] == 0 &&
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv -1 port]}] == 0 &&
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv -2 port]}] == 0 &&
+            [catch {exec src/redis-cli --cluster check 127.0.0.1:[srv -3 port]}] == 0 &&
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
         # Move the only slot back to original node using redis-cli
         exec src/redis-cli --cluster reshard 127.0.0.1:[srv -3 port] \
             --cluster-from $newnode_id \
@@ -271,10 +285,113 @@ test {Migrate the last slot away from a node using redis-cli} {
             --cluster-slots 1 \
             --cluster-yes
 
+        # The empty node will become a replica of the new owner before the
+        # `MOVED` check, so let's wait for the cluster to become stable.
+        wait_for_condition 1000 50 {
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
         # Check that the key foo has been migrated back to the original owner.
         catch { $newnode_r get foo } e
         assert_equal "MOVED $slot $owner_host:$owner_port" $e
+
+        # Check that the empty node has turned itself into a replica of the new
+        # owner and that the new owner knows that.
+        wait_for_condition 1000 50 {
+            [string match "*slave*" [$owner_r CLUSTER REPLICAS $owner_id]]
+        } else {
+            fail "Empty node didn't turn itself into a replica."
+        }
     }
+}
+
+# Test redis-cli --cluster create, add-node with cluster-port.
+# Create five nodes, three with custom cluster_port and two with default values.
+start_server [list overrides [list cluster-enabled yes cluster-node-timeout 1 cluster-port [find_available_port $::baseport $::portcount]]] {
+start_server [list overrides [list cluster-enabled yes cluster-node-timeout 1]] {
+start_server [list overrides [list cluster-enabled yes cluster-node-timeout 1 cluster-port [find_available_port $::baseport $::portcount]]] {
+start_server [list overrides [list cluster-enabled yes cluster-node-timeout 1]] {
+start_server [list overrides [list cluster-enabled yes cluster-node-timeout 1 cluster-port [find_available_port $::baseport $::portcount]]] {
+
+    # The first three are used to test --cluster create.
+    # The last two are used to test --cluster add-node
+    set node1_rd [redis_client 0]
+    set node2_rd [redis_client -1]
+    set node3_rd [redis_client -2]
+    set node4_rd [redis_client -3]
+    set node5_rd [redis_client -4]
+
+    test {redis-cli --cluster create with cluster-port} {
+        exec src/redis-cli --cluster-yes --cluster create \
+                           127.0.0.1:[srv 0 port] \
+                           127.0.0.1:[srv -1 port] \
+                           127.0.0.1:[srv -2 port]
+
+        wait_for_condition 1000 50 {
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
+        # Make sure each node can meet other nodes
+        assert_equal 3 [CI 0 cluster_known_nodes]
+        assert_equal 3 [CI 1 cluster_known_nodes]
+        assert_equal 3 [CI 2 cluster_known_nodes]
+    }
+
+    test {redis-cli --cluster add-node with cluster-port} {
+        # Adding node to the cluster (without cluster-port)
+        exec src/redis-cli --cluster-yes --cluster add-node \
+                           127.0.0.1:[srv -3 port] \
+                           127.0.0.1:[srv 0 port]
+
+        wait_for_cluster_size 4
+
+        wait_for_condition 1000 50 {
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
+        # Adding node to the cluster (with cluster-port)
+        exec src/redis-cli --cluster-yes --cluster add-node \
+                           127.0.0.1:[srv -4 port] \
+                           127.0.0.1:[srv 0 port]
+
+        wait_for_cluster_size 5
+
+        wait_for_condition 1000 50 {
+            [CI 0 cluster_state] eq {ok} &&
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok} &&
+            [CI 3 cluster_state] eq {ok} &&
+            [CI 4 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+
+        # Make sure each node can meet other nodes
+        assert_equal 5 [CI 0 cluster_known_nodes]
+        assert_equal 5 [CI 1 cluster_known_nodes]
+        assert_equal 5 [CI 2 cluster_known_nodes]
+        assert_equal 5 [CI 3 cluster_known_nodes]
+        assert_equal 5 [CI 4 cluster_known_nodes]
+    }
+# stop 5 servers
+}
+}
+}
+}
 }
 
 } ;# tags

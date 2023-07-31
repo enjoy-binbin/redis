@@ -6,6 +6,7 @@ long long longval;
 long long memval;
 RedisModuleString *strval = NULL;
 int enumval;
+int flagsval;
 
 /* Series of get and set callbacks for each type of config, these rely on the privdata ptr
  * to point to the config, and they register the configs as such. Note that one could also just
@@ -48,7 +49,7 @@ int setStringConfigCommand(const char *name, RedisModuleString *new, void *privd
         *err = RedisModule_CreateString(NULL, "Cannot set string to 'rejectisfreed'", 36);
         return REDISMODULE_ERR;
     }
-    RedisModule_Free(strval);
+    if (strval) RedisModule_FreeString(NULL, strval);
     RedisModule_RetainString(NULL, new);
     strval = new;
     return REDISMODULE_OK;
@@ -65,6 +66,20 @@ int setEnumConfigCommand(const char *name, int val, void *privdata, RedisModuleS
     REDISMODULE_NOT_USED(err);
     REDISMODULE_NOT_USED(privdata);
     enumval = val;
+    return REDISMODULE_OK;
+}
+
+int getFlagsConfigCommand(const char *name, void *privdata) {
+    REDISMODULE_NOT_USED(name);
+    REDISMODULE_NOT_USED(privdata);
+    return flagsval;
+}
+
+int setFlagsConfigCommand(const char *name, int val, void *privdata, RedisModuleString **err) {
+    REDISMODULE_NOT_USED(name);
+    REDISMODULE_NOT_USED(err);
+    REDISMODULE_NOT_USED(privdata);
+    flagsval = val;
     return REDISMODULE_OK;
 }
 
@@ -106,10 +121,13 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     }
 
     /* On the stack to make sure we're copying them. */
-    const char *enum_vals[3] = {"one", "two", "three"};
-    const int int_vals[3] = {0, 2, 4};
+    const char *enum_vals[] = {"none", "five", "one", "two", "four"};
+    const int int_vals[] = {0, 5, 1, 2, 4};
 
-    if (RedisModule_RegisterEnumConfig(ctx, "enum", 0, REDISMODULE_CONFIG_DEFAULT, enum_vals, int_vals, 3, getEnumConfigCommand, setEnumConfigCommand, NULL, NULL) == REDISMODULE_ERR) {
+    if (RedisModule_RegisterEnumConfig(ctx, "enum", 1, REDISMODULE_CONFIG_DEFAULT, enum_vals, int_vals, 5, getEnumConfigCommand, setEnumConfigCommand, NULL, NULL) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
+    if (RedisModule_RegisterEnumConfig(ctx, "flags", 3, REDISMODULE_CONFIG_DEFAULT | REDISMODULE_CONFIG_BITFLAGS, enum_vals, int_vals, 5, getFlagsConfigCommand, setFlagsConfigCommand, NULL, NULL) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
     /* Memory config here. */
@@ -134,6 +152,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 
 int RedisModule_OnUnload(RedisModuleCtx *ctx) {
     REDISMODULE_NOT_USED(ctx);
-    if (strval) RedisModule_FreeString(ctx, strval);
+    if (strval) {
+        RedisModule_FreeString(ctx, strval);
+        strval = NULL;
+    }
     return REDISMODULE_OK;
 }

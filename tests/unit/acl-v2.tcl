@@ -173,7 +173,7 @@ start_server {tags {"acl external:skip"}} {
         assert_equal PONG [$r2 PING]
 
         assert_equal {} [$r2 get readwrite_str]
-        assert_error {ERR* not an integer *} {$r2 set readwrite_str bar ex get}
+        assert_error {ERR * not an integer *} {$r2 set readwrite_str bar ex get}
 
         assert_equal {OK} [$r2 set readwrite_str bar]
         assert_equal {bar} [$r2 get readwrite_str]
@@ -195,6 +195,7 @@ start_server {tags {"acl external:skip"}} {
 
         # We don't have the permission to WRITE key.
         assert_error {*NOPERM*keys*} {$r2 bitfield readstr set u4 0 1}
+        assert_error {*NOPERM*keys*} {$r2 bitfield readstr get u4 0 set u4 0 1}
         assert_error {*NOPERM*keys*} {$r2 bitfield readstr incrby u4 0 1}
     }
 

@@ -23,6 +23,7 @@
                 "token": "CONFIG",
                 "type": "block",
                 "multiple": true,
+                "multiple_token": true,
                 "optional": true,
                 "arguments": [
                     {
@@ -38,15 +39,9 @@
             {
                 "name": "args",
                 "token": "ARGS",
-                "type": "block",
+                "type": "string",
                 "multiple": true,
-                "optional": true,
-                "arguments": [
-                    {
-                        "name": "arg",
-                        "type": "string"
-                    }
-                ]
+                "optional": true
             }
         ]
     }

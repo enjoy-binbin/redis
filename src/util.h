@@ -75,6 +75,7 @@ int string2d(const char *s, size_t slen, double *dp);
 int trimDoubleString(char *buf, size_t len);
 int d2string(char *buf, size_t len, double value);
 int ld2string(char *buf, size_t len, long double value, ld2string_mode mode);
+int double2ll(double d, long long *out);
 int yesnotoi(char *s);
 sds getAbsolutePath(char *filename);
 long getTimeZone(void);
@@ -84,6 +85,10 @@ int dirExists(char *dname);
 int dirRemove(char *dname);
 int fileExist(char *filename);
 sds makePath(char *path, char *filename);
+int fsyncFileDir(const char *filename);
+
+size_t redis_strlcpy(char *dst, const char *src, size_t dsize);
+size_t redis_strlcat(char *dst, const char *src, size_t dsize);
 
 #ifdef REDIS_TEST
 int utilTest(int argc, char **argv, int flags);
