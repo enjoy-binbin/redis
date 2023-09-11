@@ -5975,6 +5975,11 @@ NULL
     {
         /* CLUSTER ADDSLOTS <slot> [slot] ... */
         /* CLUSTER DELSLOTS <slot> [slot] ... */
+        if (nodeIsSlave(myself)) {
+            addReplyError(c, "myself is not a master");
+            return;
+        }
+
         int j, slot;
         unsigned char *slots = zmalloc(CLUSTER_SLOTS);
         int del = !strcasecmp(c->argv[1]->ptr,"delslots");
@@ -6007,6 +6012,11 @@ NULL
         }
         /* CLUSTER ADDSLOTSRANGE <start slot> <end slot> [<start slot> <end slot> ...] */
         /* CLUSTER DELSLOTSRANGE <start slot> <end slot> [<start slot> <end slot> ...] */
+        if (nodeIsSlave(myself)) {
+            addReplyError(c, "myself is not a master");
+            return;
+        }
+
         int j, startslot, endslot;
         unsigned char *slots = zmalloc(CLUSTER_SLOTS);
         int del = !strcasecmp(c->argv[1]->ptr,"delslotsrange");
