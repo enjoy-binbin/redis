@@ -119,6 +119,20 @@ static inline int defaultClientPort(void) {
     return server.tls_cluster ? server.tls_port : server.port;
 }
 
+/* When a cluster command is called, we need to decide whether to return TLS info or
+ * non-TLS info by the client's connection type. However if the command is called by
+ * a Lua script or RM_call, there is no connection in the fake client, so we use 
+ * server.current_client here to get the real client if available. And if it is not 
+ * available (modules may call commands without a real client), we return the default
+ * info, which is determined by server.tls_cluster. */
+static int shouldReturnTlsInfo(void) {
+    if (server.current_client && server.current_client->conn) {
+        return connIsTLS(server.current_client->conn);
+    } else {
+        return server.tls_cluster;
+    }
+}
+
 /* Links to the next and previous entries for keys in the same slot are stored
  * in the dict entry metadata. See Slot to Key API below. */
 #define dictEntryNextInSlot(de) \
@@ -2394,7 +2408,6 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
                 }
                 clusterDelSlot(j);
                 clusterAddSlot(sender,j);
-                bitmapClearBit(server.cluster->owner_not_claiming_slot, j);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                                      CLUSTER_TODO_UPDATE_STATE|
                                      CLUSTER_TODO_FSYNC_CONFIG);
@@ -4930,6 +4943,8 @@ int clusterDelSlot(int slot) {
     }
     serverAssert(clusterNodeClearSlotBit(n,slot) == 1);
     server.cluster->slots[slot] = NULL;
+    /* Make owner_not_claiming_slot flag consistent with slot ownership information. */
+    bitmapClearBit(server.cluster->owner_not_claiming_slot, slot);
     return C_OK;
 }
 
@@ -5570,7 +5585,7 @@ void addNodeToNodeReply(client *c, clusterNode *node) {
     }
 
     /* Report TLS ports to TLS client, and report non-TLS port to non-TLS client. */
-    addReplyLongLong(c, getNodeClientPort(node, connIsTLS(c->conn)));
+    addReplyLongLong(c, getNodeClientPort(node, shouldReturnTlsInfo()));
     addReplyBulkCBuffer(c, node->name, CLUSTER_NAMELEN);
 
     /* Add the additional endpoint information, this is all the known networking information
@@ -5703,7 +5718,7 @@ void addShardReplyForClusterShards(client *c, list *nodes) {
         serverAssert((n->slot_info_pairs_count % 2) == 0);
         addReplyArrayLen(c, n->slot_info_pairs_count);
         for (int i = 0; i < n->slot_info_pairs_count; i++)
-            addReplyBulkLongLong(c, (unsigned long)n->slot_info_pairs[i]);
+            addReplyLongLong(c, (unsigned long)n->slot_info_pairs[i]);
     } else {
         /* If no slot info pair is provided, the node owns no slots */
         addReplyArrayLen(c, 0);
@@ -5946,7 +5961,7 @@ NULL
     } else if (!strcasecmp(c->argv[1]->ptr,"nodes") && c->argc == 2) {
         /* CLUSTER NODES */
         /* Report TLS ports to TLS client, and report non-TLS port to non-TLS client. */
-        sds nodes = clusterGenNodesDescription(c, 0, connIsTLS(c->conn));
+        sds nodes = clusterGenNodesDescription(c, 0, shouldReturnTlsInfo());
         addReplyVerbatim(c,nodes,sdslen(nodes),"txt");
         sdsfree(nodes);
     } else if (!strcasecmp(c->argv[1]->ptr,"myid") && c->argc == 2) {
@@ -6312,7 +6327,7 @@ NULL
         /* Report TLS ports to TLS client, and report non-TLS port to non-TLS client. */
         addReplyArrayLen(c,n->numslaves);
         for (j = 0; j < n->numslaves; j++) {
-            sds ni = clusterGenNodeDescription(c, n->slaves[j], connIsTLS(c->conn));
+            sds ni = clusterGenNodeDescription(c, n->slaves[j], shouldReturnTlsInfo());
             addReplyBulkCString(c,ni);
             sdsfree(ni);
         }
@@ -7438,7 +7453,7 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
                error_code == CLUSTER_REDIR_ASK)
     {
         /* Report TLS ports to TLS client, and report non-TLS port to non-TLS client. */
-        int port = getNodeClientPort(n, connIsTLS(c->conn));
+        int port = getNodeClientPort(n, shouldReturnTlsInfo());
         addReplyErrorSds(c,sdscatprintf(sdsempty(),
             "-%s %d %s:%d",
             (error_code == CLUSTER_REDIR_ASK) ? "ASK" : "MOVED",

@@ -2003,7 +2003,7 @@ struct redisServer {
     /* Scripting */
     mstime_t busy_reply_threshold;  /* Script / module timeout in milliseconds */
     int pre_command_oom_state;         /* OOM before command (script?) was started */
-    int script_disable_deny_script;    /* Allow running commands marked "no-script" inside a script. */
+    int script_disable_deny_script;    /* Allow running commands marked "noscript" inside a script. */
     /* Lazy free */
     int lazyfree_lazy_eviction;
     int lazyfree_lazy_expire;
@@ -3707,6 +3707,7 @@ void _serverPanic(const char *file, int line, const char *msg, ...)
 void _serverPanic(const char *file, int line, const char *msg, ...);
 #endif
 void serverLogObjectDebugInfo(const robj *o);
+void setupDebugSigHandlers(void);
 void setupSigSegvHandler(void);
 void removeSigSegvHandlers(void);
 const char *getSafeInfoString(const char *s, size_t len, char **tmp);
