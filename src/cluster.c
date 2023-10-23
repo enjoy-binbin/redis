@@ -5514,7 +5514,7 @@ int getSlotOrReply(client *c, robj *o) {
         slot < 0 || slot >= CLUSTER_SLOTS)
     {
         addReplyError(c,"Invalid or out of range slot");
-        return -1;
+        return C_ERR;
     }
     return (int) slot;
 }
@@ -6071,7 +6071,7 @@ NULL
             return;
         }
 
-        if ((slot = getSlotOrReply(c,c->argv[2])) == -1) return;
+        if ((slot = getSlotOrReply(c, c->argv[2])) == C_ERR) return;
 
         if (!strcasecmp(c->argv[3]->ptr,"migrating") && c->argc == 5) {
             if (server.cluster->slots[slot] != myself) {
@@ -6198,13 +6198,13 @@ NULL
         addReplySds(c,reply);
     } else if (!strcasecmp(c->argv[1]->ptr,"info") && c->argc == 2) {
         /* CLUSTER INFO */
-       
         sds info = genClusterInfoString();
 
         /* Produce the reply protocol. */
         addReplyVerbatim(c,info,sdslen(info),"txt");
         sdsfree(info);
     } else if (!strcasecmp(c->argv[1]->ptr,"saveconfig") && c->argc == 2) {
+        /* CLUSTER SAVECONFIG */
         int retval = clusterSaveConfig(1);
 
         if (retval == 0)
@@ -6219,28 +6219,18 @@ NULL
         addReplyLongLong(c,keyHashSlot(key,sdslen(key)));
     } else if (!strcasecmp(c->argv[1]->ptr,"countkeysinslot") && c->argc == 3) {
         /* CLUSTER COUNTKEYSINSLOT <slot> */
-        long long slot;
+        int slot;
 
-        if (getLongLongFromObjectOrReply(c,c->argv[2],&slot,NULL) != C_OK)
-            return;
-        if (slot < 0 || slot >= CLUSTER_SLOTS) {
-            addReplyError(c,"Invalid slot");
-            return;
-        }
+        if ((slot = getSlotOrReply(c, c->argv[2])) == C_ERR) return;
         addReplyLongLong(c,countKeysInSlot(slot));
     } else if (!strcasecmp(c->argv[1]->ptr,"getkeysinslot") && c->argc == 4) {
         /* CLUSTER GETKEYSINSLOT <slot> <count> */
-        long long maxkeys, slot;
+        int slot;
+        long maxkeys;
 
-        if (getLongLongFromObjectOrReply(c,c->argv[2],&slot,NULL) != C_OK)
+        if ((slot = getSlotOrReply(c, c->argv[2])) == C_ERR) return;
+        if (getPositiveLongFromObjectOrReply(c, c->argv[3], &maxkeys, "Invalid number of keys") == C_ERR)
             return;
-        if (getLongLongFromObjectOrReply(c,c->argv[3],&maxkeys,NULL)
-            != C_OK)
-            return;
-        if (slot < 0 || slot >= CLUSTER_SLOTS || maxkeys < 0) {
-            addReplyError(c,"Invalid slot or number of keys");
-            return;
-        }
 
         unsigned int keys_in_slot = countKeysInSlot(slot);
         unsigned int numkeys = maxkeys > keys_in_slot ? keys_in_slot : maxkeys;
