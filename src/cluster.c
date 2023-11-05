@@ -5801,7 +5801,25 @@ void clusterReplyMultiBulkSlots(client * c) {
      */
     clusterNode *n = NULL;
     int num_masters = 0, start = -1;
-    void *slot_replylen = addReplyDeferredLen(c);
+
+    for (int i = 0; i <= CLUSTER_SLOTS; i++) {
+        /* Find start node and slot id. */
+        if (n == NULL) {
+            if (i == CLUSTER_SLOTS) break;
+            n = server.cluster->slots[i];
+            start = i;
+            continue;
+        }
+
+        if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
+            num_masters++;
+            if (i == CLUSTER_SLOTS) break;
+            n = server.cluster->slots[i];
+            start = i;
+        }
+    }
+
+    addReplyMapLen(c, num_masters);
 
     for (int i = 0; i <= CLUSTER_SLOTS; i++) {
         /* Find start node and slot id. */
@@ -5816,13 +5834,14 @@ void clusterReplyMultiBulkSlots(client * c) {
          * or end of slot. */
         if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
             addNodeReplyForClusterSlot(c, n, start, i-1);
-            num_masters++;
+            num_masters--;
             if (i == CLUSTER_SLOTS) break;
             n = server.cluster->slots[i];
             start = i;
         }
     }
-    setDeferredArrayLen(c, slot_replylen, num_masters);
+
+    serverAssert(c, num_masters == 0);
 }
 
 sds genClusterInfoString(void) {
