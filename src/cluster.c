@@ -5461,10 +5461,8 @@ void addReplyClusterLinkDescription(client *c, clusterLink *link) {
      * associated with nodes. The association is always bi-directional, so
      * in addReplyClusterLinkDescription, link->node should never be NULL. */
     serverAssert(link->node);
-    sds node_name = sdsnewlen(link->node->name, CLUSTER_NAMELEN);
     addReplyBulkCString(c, "node");
-    addReplyBulkCString(c, node_name);
-    sdsfree(node_name);
+    addReplyBulkCBuffer(c, link->node->name, CLUSTER_NAMELEN);
 
     addReplyBulkCString(c, "create-time");
     addReplyLongLong(c, link->ctime);
