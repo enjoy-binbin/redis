@@ -5821,6 +5821,9 @@ void clusterReplyMultiBulkSlots(client * c) {
 
     addReplyMapLen(c, num_masters);
 
+    n = NULL;
+    start = -1;
+
     for (int i = 0; i <= CLUSTER_SLOTS; i++) {
         /* Find start node and slot id. */
         if (n == NULL) {
