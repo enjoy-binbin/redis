@@ -5819,7 +5819,7 @@ void clusterReplyMultiBulkSlots(client * c) {
         }
     }
 
-    addReplyMapLen(c, num_masters);
+    addReplyArrayLen(c, num_masters);
 
     n = NULL;
     start = -1;
