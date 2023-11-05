@@ -5844,7 +5844,7 @@ void clusterReplyMultiBulkSlots(client * c) {
         }
     }
 
-    serverAssert(c, num_masters == 0);
+    serverAssert(num_masters == 0);
 }
 
 sds genClusterInfoString(void) {
