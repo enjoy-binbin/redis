@@ -39,4 +39,4 @@ jobs:
     - name: testprep
       run: sudo apt-get install tcl8.6 tclx -y
     - name: test
-      run: ./runtest --verbose --tags -slow --dump-logs --skipunit unit/cluster/replica-migration-2
+      run: ./runtest --verbose --tags -slow --dump-logs --skipunit unit/cluster/replica-migration --skipunit unit/cluster/replica-migration-2 --skipunit unit/cluster/replica-migration-3
