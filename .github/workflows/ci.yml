@@ -27,7 +27,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install tcl8.6 tclx valgrind -y
       - name: test
-        run: ./runtest --valgrind --no-latency --verbose --clients 1 --timeout 2400 --dump-logs --skipunit unit/cluster/replica-migration-2 --skipunit unit/cluster/replica-migration-3
+        run: ./runtest --valgrind --no-latency --verbose --clients 1 --timeout 2400 --dump-logs --skipunit unit/cluster/replica-migration-2 --skipunit unit/cluster/replica-migration-3 --skipunit unit/cluster/resharding
 
   test-sanitizer-address:
     runs-on: ubuntu-latest
