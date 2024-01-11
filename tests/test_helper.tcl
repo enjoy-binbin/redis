@@ -95,9 +95,75 @@ set ::all_tests {
     unit/violations
     unit/replybufsize
     unit/cluster/announced-endpoints
+    unit/cluster/base
     unit/cluster/misc
     unit/cluster/cli
+    unit/cluster/cluster-nodes-slots
+    unit/cluster/cluster-shards
+    unit/cluster/cluster-slots
+    unit/cluster/consistency-check
+    unit/cluster/diskless-load-swapdb
+    unit/cluster/faildet
+    unit/cluster/failover
+    unit/cluster/half-migrated-slot
+    unit/cluster/info
+    unit/cluster/manual-failover
+    unit/cluster/manual-takeover
+    unit/cluster/many-slot-migration
+    unit/cluster/no-failover-option
+    unit/cluster/pubsub
+    unit/cluster/pubsubshard
+    unit/cluster/pubsubshard-slot-migration
+    unit/cluster/replica-in-sync
+    unit/cluster/replica-migration
+    unit/cluster/replica-migration-2
+    unit/cluster/replica-migration-3
+    unit/cluster/resharding
     unit/cluster/scripting
+    unit/cluster/slave-selection
+    unit/cluster/slave-stop-cond
+    unit/cluster/slot-migration-response
+    unit/cluster/transactions-on-replica
+    unit/cluster/update-msg
+    unit/cluster/hostnames
+    unit/cluster/human-announced-nodename
+    unit/cluster/multi-slot-operations
+    unit/cluster/slot-ownership
+    unit/cluster/links
+    unit/cluster/cluster-response-tls
+}
+set ::all_cluster_tests {
+    unit/cluster/announced-endpoints
+    unit/cluster/base
+    unit/cluster/misc
+    unit/cluster/cli
+    unit/cluster/cluster-nodes-slots
+    unit/cluster/cluster-shards
+    unit/cluster/cluster-slots
+    unit/cluster/consistency-check
+    unit/cluster/diskless-load-swapdb
+    unit/cluster/faildet
+    unit/cluster/failover
+    unit/cluster/half-migrated-slot
+    unit/cluster/info
+    unit/cluster/manual-failover
+    unit/cluster/manual-takeover
+    unit/cluster/many-slot-migration
+    unit/cluster/no-failover-option
+    unit/cluster/pubsub
+    unit/cluster/pubsubshard
+    unit/cluster/pubsubshard-slot-migration
+    unit/cluster/replica-in-sync
+    unit/cluster/replica-migration
+    unit/cluster/replica-migration-2
+    unit/cluster/replica-migration-3
+    unit/cluster/resharding
+    unit/cluster/scripting
+    unit/cluster/slave-selection
+    unit/cluster/slave-stop-cond
+    unit/cluster/slot-migration-response
+    unit/cluster/transactions-on-replica
+    unit/cluster/update-msg
     unit/cluster/hostnames
     unit/cluster/human-announced-nodename
     unit/cluster/multi-slot-operations
@@ -134,7 +200,7 @@ set ::file ""; # If set, runs only the tests in this comma separated list
 set ::curfile ""; # Hold the filename of the current suite
 set ::accurate 0; # If true runs fuzz tests with more iterations
 set ::force_failure 0
-set ::timeout 1200; # 20 minutes without progresses will quit the test.
+set ::timeout 2400; # 40 minutes without progresses will quit the test.
 set ::last_progress [clock seconds]
 set ::active_servers {} ; # Pids of active Redis instances.
 set ::dont_clean 0
@@ -293,6 +359,16 @@ proc redis_client {args} {
     } else {
         $client select 9
     }
+    return $client
+}
+
+proc redis_deferring_client_by_addr {host port} {
+    set client [redis $host $port 1 $::tls]
+    return $client
+}
+
+proc redis_client_by_addr {host port} {
+    set client [redis $host $port 0 $::tls]
     return $client
 }
 
@@ -652,7 +728,10 @@ proc print_help_screen {} {
 for {set j 0} {$j < [llength $argv]} {incr j} {
     set opt [lindex $argv $j]
     set arg [lindex $argv [expr $j+1]]
-    if {$opt eq {--tags}} {
+
+    if {$opt eq {--only-cluster}} {
+        set ::all_tests $::all_cluster_tests
+    } elseif {$opt eq {--tags}} {
         foreach tag $arg {
             if {[string index $tag 0] eq "-"} {
                 lappend ::denytags [string range $tag 1 end]

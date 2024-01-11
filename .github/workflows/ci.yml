@@ -28,16 +28,16 @@ jobs:
   test-sanitizer-address:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: make
-        # build with TLS module just for compilation coverage
-        run: make SANITIZER=address REDIS_CFLAGS='-Werror -DDEBUG_ASSERTIONS' BUILD_TLS=module
-      - name: testprep
-        run: sudo apt-get install tcl8.6 tclx -y
-      - name: test
-        run: ./runtest --verbose --tags -slow --dump-logs
-      - name: module api test
-        run: CFLAGS='-Werror' ./runtest-moduleapi --verbose --dump-logs
+    - uses: actions/checkout@v3
+    - name: make
+      # build with TLS module just for compilation coverage
+      run: make SANITIZER=address REDIS_CFLAGS='-Werror -DDEBUG_ASSERTIONS' BUILD_TLS=module
+    - name: testprep
+      run: sudo apt-get install tcl8.6 tclx -y
+    - name: test
+      run: ./runtest --verbose --tags -slow --dump-logs --clients 5
+    - name: module api test
+      run: CFLAGS='-Werror' ./runtest-moduleapi --verbose --dump-logs
 
   build-debian-old:
     runs-on: ubuntu-latest
@@ -81,4 +81,3 @@ jobs:
       run: |
         yum -y install gcc make
         make REDIS_CFLAGS='-Werror'
-

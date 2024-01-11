@@ -197,15 +197,6 @@ proc cluster_config_consistent {} {
     return 1
 }
 
-# Wait for cluster configuration to propagate and be consistent across nodes.
-proc wait_for_cluster_propagation {} {
-    wait_for_condition 50 100 {
-        [cluster_config_consistent] eq 1
-    } else {
-        fail "cluster config did not reach a consistent state"
-    }
-}
-
 # Check if cluster's view of hostnames is consistent
 proc are_hostnames_propagated {match_string} {
     for {set j 0} {$j < $::cluster_master_nodes + $::cluster_replica_nodes} {incr j} {
