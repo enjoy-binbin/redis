@@ -219,7 +219,7 @@ proc start_cluster {masters replicas options code {slot_allocator continuous_slo
 
     # Configure the starting of multiple servers. Set cluster node timeout
     # aggressively since many tests depend on ping/pong messages.
-    if {$::valgrind} {
+    if {$::valgrind || $::sanitizer} {
         set node_timeout 10000
     } else {
         set node_timeout 3000
