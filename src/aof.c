@@ -367,6 +367,8 @@ aofManifest *aofLoadManifestFromFile(sds am_filepath) {
     return am;
 
 loaderr:
+    fclose(fp);
+
     /* Sanitizer suppression: may report a false positive if we goto loaderr
      * and exit(1) without freeing these allocations. */
     if (argv) sdsfreesplitres(argv, argc);
