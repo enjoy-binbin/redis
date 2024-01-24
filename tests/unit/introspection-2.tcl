@@ -118,6 +118,14 @@ start_server {tags {"introspection"}} {
         assert_match {*calls=1,*} [cmdstat geoadd]
     } {} {needs:config-resetstat}
 
+    test {COMMAND} {
+        set res [r command]
+        puts "===================="
+        puts "11111"
+        puts $res
+        puts "2222"
+    }
+
     test {COMMAND COUNT get total number of Redis commands} {
         assert_morethan [r command count] 0
     }
