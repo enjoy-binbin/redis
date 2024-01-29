@@ -428,4 +428,43 @@ start_server {tags {"info" "external:skip"}} {
         assert_equal [getInfoProperty $info_mem databases_rehashing_dict_count] {1}
         assert_equal [getInfoProperty $info_mem mem_overhead_hashtable_rehashing] {32}       
     }
+
+    foreach cmd {flushdb flushall} {
+        test "$cmd will reset counter during rehashing process" {
+            r flushall
+
+            for {set i 0} {$i < 16} {incr i} { r set $i $i ex 10000}
+            while {[status r databases_rehashing_dict_count]} { after 10 }
+
+            # The overhead_hashtable_lut is the two hash table size * 8, that is 2*16*8
+            assert_equal 256 [status r mem_overhead_hashtable_lut]
+            assert_equal 0 [status r mem_overhead_hashtable_rehashing]
+            assert_equal 0 [status r databases_rehashing_dict_count]
+
+            # Disable the activerehashing
+            r config set activerehashing no
+
+            # The overhead_hashtable_lut add a new hash table 32*8 based on the previous one
+            # The overhead_hashtable_rehashing is the th0 table size * 8, that is 16*8
+            r set foo bar
+            assert_equal 512 [status r mem_overhead_hashtable_lut]
+            assert_equal 128 [status r mem_overhead_hashtable_rehashing]
+            assert_equal 1 [status r databases_rehashing_dict_count]
+
+            # The overhead_hashtable_lut add a new hash table 32*8 based on the previous one
+            # The overhead_hashtable_rehashing is the two ht0 table size * 8, that is 2*16*8
+            r set foo bar ex 10000
+            assert_equal 768 [status r mem_overhead_hashtable_lut]
+            assert_equal 256 [status r mem_overhead_hashtable_rehashing]
+            assert_equal 2 [status r databases_rehashing_dict_count]
+
+            # flushdb or flushall will reset the counter
+            r $cmd
+            assert_equal 0 [status r mem_overhead_hashtable_lut]
+            assert_equal 0 [status r mem_overhead_hashtable_rehashing]
+            assert_equal 0 [status r databases_rehashing_dict_count]
+
+            r config set activerehashing yes
+        }
+    }
 }

@@ -675,6 +675,13 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
 
     for (int j = startdb; j <= enddb; j++) {
         removed += dbSize(&dbarray[j], DB_MAIN);
+
+        /* Before clearing the dictionary, clear tje hash table overhead stats. */
+        for (int k = 0; k < dbarray[j].dict_count; k++) {
+            clearHashtableOverhead(dbarray[j].dict[k]);
+            clearHashtableOverhead(dbarray[j].expires[k]);
+        }
+
         if (async) {
             emptyDbAsync(&dbarray[j]);
         } else {
@@ -695,10 +702,7 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
                 }
             }
         }
-        for (int k = 0; k < dbarray[j].dict_count; k++) {
-            clearHashtableOverhead(dbarray[j].dict[k]);
-            clearHashtableOverhead(dbarray[j].expires[k]);
-        }
+
         /* Because all keys of database are removed, reset average ttl. */
         dbarray[j].avg_ttl = 0;
         dbarray[j].expires_cursor = 0;
