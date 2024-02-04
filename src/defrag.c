@@ -34,8 +34,6 @@
  */
 
 #include "server.h"
-#include "cluster.h"
-#include <time.h>
 #include <stddef.h>
 
 #ifdef HAVE_DEFRAG
@@ -99,7 +97,8 @@ robj *activeDefragStringOb(robj* ob) {
         return NULL;
 
     /* try to defrag robj (only if not an EMBSTR type (handled below). */
-    if (ob->type!=OBJ_STRING || ob->encoding!=OBJ_ENCODING_EMBSTR) {
+    if (ob->type!=OBJ_STRING) {
+        serverAssert(ob->encoding!=OBJ_ENCODING_EMBSTR);
         if ((ret = activeDefragAlloc(ob))) {
             ob = ret;
         }
