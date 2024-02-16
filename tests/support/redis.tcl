@@ -372,7 +372,8 @@ proc ::redis::redis_read_reply_logic {id fd} {
                     set ::redis::fd($id) {}
                     return -code error "I/O error reading reply"
                 }
-                return -code error "Bad protocol, '$type' as reply type byte"
+                set data [redis_safe_gets $fd]
+                return -code error "Bad protocol, '$type' as reply type byte, data: $data"
             }
         }
     }

@@ -2971,7 +2971,7 @@ void rdbLoadProgressCallback(rio *r, const void *buf, size_t len) {
     }
 }
 
-/* Save the given functions_ctx to the rdb.
+/* Save the given functions_ctx to m rdb.
  * The err output parameter is optional and will be set with relevant error
  * message on failure, it is the caller responsibility to free the error
  * message on failure.
