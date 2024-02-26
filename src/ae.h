@@ -108,6 +108,7 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
     int flags;
+    int numevents; /* The return value of poll in aeProcessEvents. */
 } aeEventLoop;
 
 /* Prototypes */

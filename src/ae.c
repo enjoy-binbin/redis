@@ -82,6 +82,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->beforesleep = NULL;
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
+    eventLoop->numevents = 0;
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
@@ -402,6 +403,9 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         if (!(flags & AE_FILE_EVENTS)) {
             numevents = 0;
         }
+
+        /* Cache the returned numevents. */
+        eventLoop.numevents = numevents;
 
         /* After sleep callback. */
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
