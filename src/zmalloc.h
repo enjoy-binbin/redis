@@ -71,6 +71,7 @@
  */
 #ifndef ZMALLOC_LIB
 #define ZMALLOC_LIB "libc"
+#define USE_LIBC 1
 
 #if !defined(NO_MALLOC_USABLE_SIZE) && \
     (defined(__GLIBC__) || defined(__FreeBSD__) || \
@@ -91,6 +92,11 @@
 #define zmalloc_size(p) malloc_usable_size(p)
 
 #endif
+#endif
+
+/* Includes for malloc_trim(). */
+#if defined(__linux__) && defined(USE_LIBC)
+#include <malloc.h>
 #endif
 
 /* We can enable the Redis defrag capabilities only if we are using Jemalloc
