@@ -12,7 +12,10 @@ proc common_bench_setup {cmd} {
     if {[catch { exec {*}$cmd } error]} {
         set first_line [lindex [split $error "\n"] 0]
         puts [colorstr red "redis-benchmark non zero code. first line: $first_line"]
-        fail "redis-benchmark non zero code. first line: $first_line"
+        puts "============="
+        puts $error
+        puts "============="
+        fail "redis-benchmark non zero code. first line: $first_line, error: $error"
     }
 }
 
