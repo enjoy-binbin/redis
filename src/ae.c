@@ -405,7 +405,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         }
 
         /* Cache the returned numevents. */
-        eventLoop.numevents = numevents;
+        eventLoop->numevents = numevents;
 
         /* After sleep callback. */
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
