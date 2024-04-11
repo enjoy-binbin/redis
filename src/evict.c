@@ -13,6 +13,7 @@
 #include "bio.h"
 #include "atomicvar.h"
 #include "script.h"
+#include "functions.h"
 #include <math.h>
 
 /* ----------------------------------------------------------------------------
@@ -382,6 +383,14 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
     /* Check if we are over the memory usage limit. If we are not, no need
      * to subtract the slaves output buffers. We can just return ASAP. */
     mem_reported = zmalloc_used_memory();
+
+    if (server.lua_arena != UINT_MAX) {
+        /* This means that lua memory does not count in used_memory,
+         * so we need to count it used_memory in here. */
+        mem_reported += evalMemory();
+        mem_reported += functionsMemory();
+    }
+
     if (total) *total = mem_reported;
 
     /* We may return ASAP if there is no need to compute the level. */
@@ -404,6 +413,10 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
 
     /* Check if we are still over the memory limit. */
     if (mem_used <= server.maxmemory) return C_OK;
+
+    /* We allow it to use an additional memory during script execution. */
+    if (scriptIsRunning() && (mem_used - server.maxmemory <= server.lua_extra_memory))
+        return C_OK;
 
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;

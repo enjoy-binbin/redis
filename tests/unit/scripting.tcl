@@ -972,11 +972,11 @@ start_server {tags {"scripting"}} {
              return redis.call("EXISTS", "key")
         } 1 key] 0
     }
-    
+
     test "Script ACL check" {
         r acl setuser bob on {>123} {+@scripting} {+set} {~x*}
         assert_equal [r auth bob 123] {OK}
-        
+
         # Check permission granted
         assert_equal [run_script {
             return redis.acl_check_cmd('set','xx',1)
@@ -986,7 +986,7 @@ start_server {tags {"scripting"}} {
         assert_equal [run_script {
             return redis.acl_check_cmd('hset','xx','f',1)
         } 1 xx] {}
-        
+
         # Check permission denied unauthorised key
         # Note: we don't pass the "yy" key as an argument to the script so key acl checks won't block the script
         assert_equal [run_script {
@@ -1604,6 +1604,135 @@ start_server {tags {"scripting external:skip"}} {
         assert_equal $evicted [expr $num-500]
         # cached = num load scripts + 500 eval scripts
         assert_equal $cached [expr $num+500]
+    }
+}
+
+start_server {tags {"scripting external:skip"}} {
+    set extra_memory [lindex [r config get lua-extra-memory] 1]
+    set extra_maxmemory [expr $extra_memory+1048576] ;# Give extra 1MB as tolerance
+
+    test {Lua eval redis.call OOM with noeviction} {
+        r flushall
+        r config resetstat
+        r config set maxmemory-policy noeviction
+        r config set maxmemory 50MB
+
+        # call will raise the error during the processing.
+        assert_error {OOM*} {r eval "for i=1,1000000 do redis.call('SET', 'key1-:' .. i, 'value1-:' .. i) end" 0}
+
+        # We cannot keep the atomic so we will left some keys.
+        assert_range [r dbsize] 0 1000000
+
+        # Check the used_memory is ok.
+        set maxmemory [s maxmemory]
+        set used_memory [s used_memory]
+        set up_limit [expr $maxmemory+$extra_maxmemory]
+        assert_range $used_memory $maxmemory $up_limit
+
+        # This will not trigger OOM since no write command is called
+        assert_equal {} [r eval "" 0]
+        assert_equal {PONG} [r eval "return redis.call('ping')" 0]
+
+        # Check OOM status.
+        assert_error {OOM*} {r set foo bar}
+        assert_error {OOM*} {r eval "for i=1,1000 do redis.call('SET', 'key3-:' .. i, 'value3-:' .. i) end" 0}
+        assert_equal 0 [s evicted_keys]
+    }
+
+    test {Lua eval redis.call OOM with eviction} {
+        r flushall
+        r config resetstat
+        r config set maxmemory 50MB
+
+        # We won't trigger eviction during the eval.
+        assert_error {OOM*} {r eval "for i=1,1000000 do redis.call('SET', 'key1-:' .. i, 'value1-:' .. i) end" 0}
+
+        # We cannot keep the atomic so we will left some keys.
+        assert_range [r dbsize] 0 1000000
+
+        # Check the used_memory is ok.
+        set maxmemory [s maxmemory]
+        set used_memory [s used_memory]
+        set up_limit [expr $maxmemory+$extra_maxmemory]
+        assert_range $used_memory $maxmemory $up_limit
+
+        # Check OOM status.
+        assert_error {OOM*} {r eval "for i=1,10 do redis.call('SET', 'key2-:' .. i, 'value2-:' .. i) end" 0}
+
+        # This will trigger the eviction.
+        r config set maxmemory-policy allkeys-random
+        assert_equal {OK} [r set foo bar]
+        r config set maxmemory-policy noeviction
+        set evicted_key [s evicted_keys]
+        assert_morethan $evicted_key 0
+
+        # Check OOM status and script won't trigger the eviction (we don't have any volatile keys).
+        r config set maxmemory-policy volatile-random
+        assert_error {OOM*} {r eval "for i=1,1000000 do redis.call('SET', 'key3-:' .. i, 'value3-:' .. i) end" 0}
+        assert_equal $evicted_key [s evicted_keys]
+    }
+
+    test {Lua eval redis.pcall OOM with noeviction} {
+        r flushall
+        r config resetstat
+        r config set maxmemory-policy noeviction
+        r config set maxmemory 50MB
+
+        # pcall does not raise the error.
+        assert_equal {} [r eval "for i=1,1000000 do redis.pcall('SET', 'key1-:' .. i, 'value1-:' .. i) end" 0]
+
+        # We cannot keep the atomic so we will left some keys.
+        assert_range [r dbsize] 0 1000000
+
+        # Check the used_memory is ok.
+        set maxmemory [s maxmemory]
+        set used_memory [s used_memory]
+        set up_limit [expr $maxmemory+$extra_maxmemory]
+        assert_range $used_memory $maxmemory $up_limit
+
+        # This will not trigger OOM since no write command is called
+        assert_equal {} [r eval "" 0]
+        assert_equal {PONG} [r eval "return redis.call('ping')" 0]
+        assert_equal {PONG} [r eval "return redis.pcall('ping')" 0]
+
+        # Check OOM status.
+        assert_error {OOM*} {r set foo bar}
+        assert_equal 0 [s evicted_keys]
+    }
+
+    test {Lua eval redis.pcall OOM with eviction} {
+        r flushall
+        r config resetstat
+        r config set maxmemory 50MB
+
+        # pcall does not raise the error.
+        assert_equal {} [r eval "for i=1,1000000 do redis.pcall('SET', 'key1-:' .. i, 'value1-:' .. i) end" 0]
+
+        # We cannot keep the atomic so we will left some keys.
+        assert_range [r dbsize] 0 1000000
+
+        # Check the used_memory is ok.
+        set maxmemory [s maxmemory]
+        set used_memory [s used_memory]
+        set up_limit [expr $maxmemory+$extra_maxmemory]
+        assert_range $used_memory $maxmemory $up_limit
+
+        # Check OOM status.
+        assert_error {OOM*} {r set foo bar}
+        assert_error {OOM*} {r eval "redis.call('set', 'foo', 'bar')" 0}
+
+        # This will trigger the eviction.
+        r config set maxmemory-policy allkeys-random
+        assert_equal {OK} [r set foo bar]
+        r config set maxmemory-policy noeviction
+        set evicted_key [s evicted_keys]
+        assert_morethan $evicted_key 0
+
+        # The script won't trigger the eviction (we don't have any volatile keys).
+        r config set maxmemory-policy volatile-random
+        assert_equal {} [r eval "for i=1,1000000 do redis.pcall('SET', 'key4-:' .. i, 'value4-:' .. i) end" 0]
+        assert_range [r dbsize] 0 1000000
+        assert_equal $evicted_key [s evicted_keys]
     }
 }
 

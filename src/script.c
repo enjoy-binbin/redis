@@ -435,7 +435,11 @@ static int scriptVerifyWriteCommandAllow(scriptRunCtx *run_ctx, char **err) {
     return C_OK;
 }
 
+#define SCRIPT_OOM_LOG_RATE 5 /* Seconds between logging. */
 static int scriptVerifyOOM(scriptRunCtx *run_ctx, char **err) {
+    /* To prevent pcall from generating a large number of logs. */
+    static time_t last_script_oom_log = 0;
+
     if (run_ctx->flags & SCRIPT_ALLOW_OOM) {
         /* Allow running any command even if OOM reached */
         return C_OK;
@@ -452,6 +456,28 @@ static int scriptVerifyOOM(scriptRunCtx *run_ctx, char **err) {
         server.pre_command_oom_state &&                /* Detected OOM when script start. */
         (run_ctx->c->cmd->flags & CMD_DENYOOM))
     {
+        if ((server.unixtime - last_script_oom_log) >= SCRIPT_OOM_LOG_RATE) {
+            last_script_oom_log = server.unixtime;
+            serverLog(LL_WARNING, "OOM occurs before script starts, returning OOM error.");
+        }
+        *err = sdsdup(shared.oomerr->ptr);
+        return C_ERR;
+    }
+
+    /* Here we don't check SCRIPT_WRITE_DIRTY since we are aimed to solve the
+     * write OOM issue. Although this will break the atomicity of lua script,
+     * and the failed script may leave dirty data, there is nothing we can do
+     * but exit, but we don't want to exit, so just be it. */
+    if (server.maxmemory &&                            /* Maxmemory is actually enabled. */
+        !mustObeyClient(run_ctx->original_client) &&   /* Don't care about mem for replicas or AOF. */
+        !(server.masterhost && server.repl_slave_ignore_maxmemory) && /* Don't care about replicas that ignore maxmemory. */
+        (run_ctx->c->cmd->flags & CMD_DENYOOM) &&      /* Refuse to execute commands when OOM occurs. */
+        (getMaxmemoryState(NULL, NULL, NULL, NULL) == C_ERR)) /* OOM. */
+    {
+        if ((server.unixtime - last_script_oom_log) >= SCRIPT_OOM_LOG_RATE) {
+            last_script_oom_log = server.unixtime;
+            serverLog(LL_WARNING, "OOM occurs during script execution, returning OOM error.");
+        }
         *err = sdsdup(shared.oomerr->ptr);
         return C_ERR;
     }
