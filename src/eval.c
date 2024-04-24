@@ -725,6 +725,10 @@ unsigned long evalMemory(void) {
     return luaMemory(lctx.lua);
 }
 
+void evalGC(int step) {
+    luaGC(lctx.lua, step);
+}
+
 dict* evalScriptsDict(void) {
     return lctx.lua_scripts;
 }

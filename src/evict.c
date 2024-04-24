@@ -384,7 +384,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
      * to subtract the slaves output buffers. We can just return ASAP. */
     mem_reported = zmalloc_used_memory();
 
-    if (server.lua_arena != UINT_MAX) {
+    if (server.lua_arena == UINT_MAX) {
         /* This means that lua memory does not count in used_memory,
          * so we need to count it used_memory in here. */
         mem_reported += evalMemory();

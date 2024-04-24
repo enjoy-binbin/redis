@@ -1371,6 +1371,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Handle background operations on Redis databases. */
     databasesCron();
 
+    /* Try to use gc to reclaim lua VM memory time by time. */
+    run_with_period(server.maxmemory_lua_reached ? 5000 : 30000) {
+        evalGC(10);
+        functionsGC(10);
+    }
+
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
     if (!hasActiveChildProcess() &&
@@ -2556,6 +2562,7 @@ void resetServerStats(void) {
     server.stat_reply_buffer_expands = 0;
     memset(server.duration_stats, 0, sizeof(durationStats) * EL_DURATION_TYPE_NUM);
     server.el_cmd_cnt_max = 0;
+    server.maxmemory_lua_reached = 0;
     lazyfreeResetStats();
 }
 

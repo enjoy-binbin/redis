@@ -1084,6 +1084,18 @@ unsigned long functionsLibNum(void) {
     return dictSize(curr_functions_lib_ctx->libraries);
 }
 
+/* Return memory usage of all the engines combine */
+void functionsGC(int step) {
+    dictIterator *iter = dictGetIterator(engines);
+    dictEntry *entry = NULL;
+    while ((entry = dictNext(iter))) {
+        engineInfo *ei = dictGetVal(entry);
+        engine *engine = ei->engine;
+        engine->gc_function(engine->engine_ctx, step);
+    }
+    dictReleaseIterator(iter);
+}
+
 dict* functionsLibGet(void) {
     return curr_functions_lib_ctx->libraries;
 }

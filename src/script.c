@@ -8,6 +8,7 @@
 
 #include "server.h"
 #include "script.h"
+#include "functions.h"
 #include "cluster.h"
 
 #include <lua.h>
@@ -117,6 +118,35 @@ client* scriptGetCaller(void) {
  * from time to time to reply some special command (like ping)
  * and also check if the run should be terminated. */
 int scriptInterrupt(scriptRunCtx *run_ctx) {
+    if (server.maxmemory && /* Maxmemory is actually enabled. */
+        !mustObeyClient(run_ctx->original_client) &&   /* Don't care about mem for replicas or AOF. */
+        !(server.masterhost && server.repl_slave_ignore_maxmemory) && /* Don't care about replicas that ignore maxmemory. */
+        (getMaxmemoryState(NULL, NULL, NULL, NULL) == C_ERR)) /* OOM. */
+    {
+        /* Reached the limit, do a performs a full garbage-collection cycle. */
+        unsigned long memory_lua = evalMemory();
+        unsigned long memory_functions = functionsMemory();
+        serverLog(LL_WARNING, "Lua heap memory reached limit, doing a full gc, "
+                              "memory_lua: %lu, memory_functions: %lu.",
+                              memory_lua, memory_functions);
+        evalGC(0);
+        functionsGC(0);
+        memory_lua = evalMemory();
+        memory_functions = functionsMemory();
+        serverLog(LL_WARNING, "Full gc done, memory_lua: %lu, memory_functions: %lu.",
+                              memory_lua, memory_functions);
+
+        if (getMaxmemoryState(NULL, NULL, NULL, NULL) == C_ERR) {
+            /* If we still reach the limit after the full GC, aborting the script. */
+            server.maxmemory_lua_reached = 1;
+            serverLog(LL_WARNING, "Lua heap memory still reached limit after full gc, returning error.");
+            return SCRIPT_MEMORY_LIMIT_REACHED;
+        }
+    }
+
+    /* Reset the limit flag. */
+    server.maxmemory_lua_reached = 0;
+
     if (run_ctx->flags & SCRIPT_TIMEDOUT) {
         /* script already timedout
            we just need to precess some events and return */

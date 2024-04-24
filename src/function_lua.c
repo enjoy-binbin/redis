@@ -183,6 +183,11 @@ static void luaEngineFreeFunction(void *engine_ctx, void *compiled_function) {
     zfree(f_ctx);
 }
 
+static void luaEngineGCFunction(void *engine_ctx, int step) {
+    luaEngineCtx *lua_engine_ctx = engine_ctx;
+    luaGC(lua_engine_ctx->lua, step);
+}
+
 static void luaRegisterFunctionArgsInitialize(registerFunctionArgs *register_f_args,
     sds name,
     sds desc,
@@ -480,6 +485,7 @@ int luaEngineInitEngine(void) {
         .get_function_memory_overhead = luaEngineFunctionMemoryOverhead,
         .get_engine_memory_overhead = luaEngineMemoryOverhead,
         .free_function = luaEngineFreeFunction,
+        .gc_function = luaEngineGCFunction,
     };
     return functionsRegisterEngine(LUA_ENGINE_NAME, lua_engine);
 }

@@ -67,6 +67,9 @@ typedef struct engine {
 
     /* free the given function */
     void (*free_function)(void *engine_ctx, void *compiled_function);
+
+    /* Garbage collection function. */
+    void (*gc_function)(void *engine_ctx, int step);
 } engine;
 
 /* Hold information about an engine.
@@ -103,6 +106,7 @@ unsigned long functionsMemory(void);
 unsigned long functionsMemoryOverhead(void);
 unsigned long functionsNum(void);
 unsigned long functionsLibNum(void);
+void functionsGC(int step);
 dict* functionsLibGet(void);
 size_t functionsLibCtxFunctionsLen(functionsLibCtx *functions_ctx);
 functionsLibCtx* functionsLibCtxGetCurrent(void);

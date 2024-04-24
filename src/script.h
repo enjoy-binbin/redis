@@ -35,6 +35,7 @@
  */
 #define SCRIPT_KILL 1
 #define SCRIPT_CONTINUE 2
+#define SCRIPT_MEMORY_LIMIT_REACHED 3 /* Lua VM memory usage reached the limit. */
 
 /* runCtx flags */
 #define SCRIPT_WRITE_DIRTY            (1ULL<<0) /* indicate that the current script already performed a write command */

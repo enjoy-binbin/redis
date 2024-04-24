@@ -1546,8 +1546,9 @@ static void luaMaskCountHook(lua_State *lua, lua_Debug *ar) {
     UNUSED(ar);
     scriptRunCtx* rctx = luaGetFromRegistry(lua, REGISTRY_RUN_CTX_NAME);
     serverAssert(rctx); /* Only supported inside script invocation */
-    if (scriptInterrupt(rctx) == SCRIPT_KILL) {
-        serverLog(LL_NOTICE,"Lua script killed by user with SCRIPT KILL.");
+    int ret = scriptInterrupt(rctx);
+    if (ret == SCRIPT_KILL) {
+        serverLog(LL_WARNING,"Lua script killed by user with SCRIPT KILL.");
 
         /*
          * Set the hook to invoke all the time so the user
@@ -1557,6 +1558,15 @@ static void luaMaskCountHook(lua_State *lua, lua_Debug *ar) {
         lua_sethook(lua, luaMaskCountHook, LUA_MASKLINE, 0);
 
         luaPushError(lua,"Script killed by user with SCRIPT KILL...");
+        luaError(lua);
+    } else if (ret == SCRIPT_MEMORY_LIMIT_REACHED) {
+        serverLog(LL_WARNING, "Script killed by server because lua memory usage reached the limit.");
+        /* Set the hook to invoke all the time so the user
+         * will not be able to catch the error with pcall and invoke
+         * pcall again which will prevent the script from ever been killed. */
+        lua_sethook(lua, luaMaskCountHook, LUA_MASKLINE, 0);
+
+        luaPushError(lua, "Script killed by server because lua memory usage reached the limit.");
         luaError(lua);
     }
 }
@@ -1708,4 +1718,16 @@ void luaCallFunction(scriptRunCtx* run_ctx, lua_State *lua, robj** keys, size_t 
 
 unsigned long luaMemory(lua_State *lua) {
     return lua_gc(lua, LUA_GCCOUNT, 0) * 1024LL;
+}
+
+/* If the step is 0, performs a full garbage-collection cycle.
+ * Otherwise, performs an incremental step of garbage collection. */
+void luaGC(lua_State *lua, int step) {
+    if (step == 0) {
+        /* Do a full garbage-collection cycle. */
+        lua_gc(lua, LUA_GCCOLLECT, 0);
+    } else {
+        /* Do an incremental step of garbage collection. */
+        lua_gc(lua, LUA_GCSTEP, step);
+    }
 }
