@@ -1503,6 +1503,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             server.rdb_bgsave_scheduled = 0;
     }
 
+    run_with_period(1000) {
+        /* See bioDiskCheck */
+        if (bioPendingJobsOfType(BIO_DISK_CHECK) == 0)
+            bioCreateDiskCheckJob();
+    }
+
     run_with_period(100) {
         if (moduleCount()) modulesCron();
     }
@@ -2040,6 +2046,10 @@ void initServerConfig(void) {
     server.loading = 0;
     server.async_loading = 0;
     server.loading_rdb_used_mem = 0;
+    server.disk_last_check_status = C_OK;
+    server.disk_last_check_error_type = C_OK;
+    server.disk_last_check_errno = 0;
+    server.disk_last_check_ok_time = time(NULL);
     server.aof_state = AOF_OFF;
     server.aof_rewrite_base_size = 0;
     server.aof_rewrite_scheduled = 0;
@@ -4241,6 +4251,77 @@ void incrementErrorCount(const char *fullerr, size_t namelen) {
     }
 }
 
+/* Disk error type, see server.disk_last_check_error_type. */
+#define DISK_CHECK_OK 0
+#define DISK_CHECK_ERROR_FOPEN 1  /* fopen error. */
+#define DISK_CHECK_ERROR_FWRITE 2 /* fwrite error. */
+#define DISK_CHECK_ERROR_FFLUSH 3 /* fflush error. */
+#define DISK_CHECK_ERROR_FSYNC 4  /* fsync error. */
+#define DISK_CHECK_ERROR_FCLOSE 5 /* fclose error. */
+void bioDiskCheck(void) {
+    char tmpfile[256];
+    snprintf(tmpfile, 256, "temp-disk-check-%d.txt", (int)server.pid);
+
+    FILE *fp = fopen(tmpfile, "w");
+    if (!fp) {
+        /* open error */
+        server.disk_last_check_status = C_ERR;
+        server.disk_last_check_error_type = DISK_CHECK_ERROR_FOPEN;
+        server.disk_last_check_errno = errno;
+        serverLog(LL_WARNING, "bioDiskCheck fopen error: %s", strerror(errno));
+        return;
+    }
+
+    char text[] = "Hello world!\n";
+    size_t text_size = sizeof(text);
+    size_t written = fwrite(text, 1, text_size, fp);
+    if (written != text_size) {
+        /* fwrite error */
+        server.disk_last_check_status = C_ERR;
+        server.disk_last_check_error_type = DISK_CHECK_ERROR_FWRITE;
+        server.disk_last_check_errno = errno;
+        serverLog(LL_WARNING, "bioDiskCheck fwrite error: %s", strerror(errno));
+        fclose(fp);
+        return;
+    }
+
+    if (fflush(fp)) {
+        /* flush error */
+        server.disk_last_check_status = C_ERR;
+        server.disk_last_check_error_type = DISK_CHECK_ERROR_FFLUSH;
+        server.disk_last_check_errno = errno;
+        serverLog(LL_WARNING, "bioDiskCheck fflush error: %s", strerror(errno));
+        fclose(fp);
+        return;
+    }
+
+    if (fsync(fileno(fp))) {
+        /* fsync error */
+        server.disk_last_check_status = C_ERR;
+        server.disk_last_check_error_type = DISK_CHECK_ERROR_FSYNC;
+        server.disk_last_check_errno = errno;
+        serverLog(LL_WARNING, "bioDiskCheck fsync error: %s", strerror(errno));
+        fclose(fp);
+        return;
+    }
+
+    if (fclose(fp)) {
+        /* fclose error */
+        server.disk_last_check_status = C_ERR;
+        server.disk_last_check_error_type = DISK_CHECK_ERROR_FCLOSE;
+        server.disk_last_check_errno = errno;
+        serverLog(LL_WARNING, "bioDiskCheck fclose error: %s", strerror(errno));
+        return;
+    }
+
+    /* Everything is fine. */
+    server.disk_last_check_status = C_OK;
+    server.disk_last_check_error_type = DISK_CHECK_OK;
+    server.disk_last_check_errno = 0;
+    server.disk_last_check_ok_time = server.unixtime;
+    serverLog(LL_WARNING, "bioDiskCheck ok");
+}
+
 /*================================== Shutdown =============================== */
 
 /* Close listening sockets. Also unlink the unix domain socket if
@@ -6122,6 +6203,10 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
     if (dictFind(section_dict, "debug") != NULL) {
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info, "# Debug\r\n" FMTARGS(
+            "disk_last_check_status:%s\r\n", (server.disk_last_check_status == C_OK ? "ok" : "err"),
+            "disk_last_check_error_type:%d\r\n", server.disk_last_check_error_type,
+            "disk_last_check_errno:%d\r\n", server.disk_last_check_errno,
+            "disk_last_check_ok_time:%jd\r\n", (intmax_t)server.disk_last_check_ok_time,
             "eventloop_duration_aof_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_AOF].sum,
             "eventloop_duration_cron_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CRON].sum,
             "eventloop_duration_max:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].max,

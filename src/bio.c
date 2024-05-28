@@ -51,6 +51,7 @@ static char* bio_worker_title[] = {
     "bio_close_file",
     "bio_aof",
     "bio_lazy_free",
+    "bio_disk_check",
 };
 
 #define BIO_WORKER_NUM (sizeof(bio_worker_title) / sizeof(*bio_worker_title))
@@ -60,6 +61,7 @@ static unsigned int bio_job_to_worker[] = {
     [BIO_AOF_FSYNC] = 1,
     [BIO_CLOSE_AOF] = 1,
     [BIO_LAZY_FREE] = 2,
+    [BIO_DISK_CHECK] = 3,
     [BIO_COMP_RQ_CLOSE_FILE] = 0,
     [BIO_COMP_RQ_AOF_FSYNC]  = 1,
     [BIO_COMP_RQ_LAZY_FREE]  = 2
@@ -250,6 +252,11 @@ void bioCreateFsyncJob(int fd, long long offset, int need_reclaim_cache) {
     bioSubmitJob(BIO_AOF_FSYNC, job);
 }
 
+void bioCreateDiskCheckJob(void) {
+    bio_job *job = zmalloc(sizeof(*job));
+    bioSubmitJob(BIO_DISK_CHECK, job);
+}
+
 void *bioProcessBackgroundJobs(void *arg) {
     bio_job *job;
     unsigned long worker = (unsigned long) arg;
@@ -348,6 +355,8 @@ void *bioProcessBackgroundJobs(void *arg) {
             if (write(job_comp_pipe[1],"A",1) != 1) {
                 /* Pipe is non-blocking, write() may fail if it's full. */
             }
+        } else if (job_type == BIO_DISK_CHECK) {
+            bioDiskCheck();
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
         }

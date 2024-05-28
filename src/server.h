@@ -1757,6 +1757,11 @@ struct redisServer {
     int latency_tracking_info_percentiles_len;
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
+    /* Disk check */
+    int disk_last_check_status;     /* C_OK or C_ERR. */
+    int disk_last_check_error_type; /* Error type if disk_last_check_status is C_ERR. */
+    int disk_last_check_errno;      /* errno was set if disk_last_check_status is C_ERR. */
+    time_t disk_last_check_ok_time; /* Unix time of last successful disk check. */
     /* AOF persistence */
     int aof_enabled;                /* AOF configuration */
     int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
@@ -3087,6 +3092,7 @@ void resetCommandTableStats(dict* commands);
 void resetErrorTableStats(void);
 void adjustOpenFilesLimit(void);
 void incrementErrorCount(const char *fullerr, size_t namelen);
+void bioDiskCheck(void);
 void closeListeningSockets(int unlink_unix_socket);
 void updateCachedTime(int update_daylight_info);
 void enterExecutionUnit(int update_cached_time, long long us);
