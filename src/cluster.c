@@ -75,6 +75,15 @@ void clusterDelNode(clusterNode *delnode);
 sds representClusterNodeFlags(sds ci, uint16_t flags);
 uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
+unsigned int countKeysInSlot(unsigned int hashslot);
+unsigned int delKeysInSlot(unsigned int hashslot);
+
+/* Links to the next and previous entries for keys in the same slot are stored
+ * in the dict entry metadata. See Slot to Key API below. */
+#define dictEntryNextInSlot(de) \
+    (((clusterDictEntryMetadata *)dictMetadata(de))->next)
+#define dictEntryPrevInSlot(de) \
+    (((clusterDictEntryMetadata *)dictMetadata(de))->prev)
 
 /* -----------------------------------------------------------------------------
  * Initialization
@@ -499,10 +508,8 @@ void clusterInit(void) {
         }
     }
 
-    /* The slots -> keys map is a radix tree. Initialize it here. */
-    server.cluster->slots_to_keys = raxNew();
-    memset(server.cluster->slots_keys_count,0,
-           sizeof(server.cluster->slots_keys_count));
+    /* Reset data for the Slot to key API. */
+    slotToKeyFlush();
 
     /* Set myself->port / cport to my listening ports, we'll just need to
      * discover the IP address via MEET messages. */
@@ -4413,8 +4420,6 @@ void clusterCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr,"getkeysinslot") && c->argc == 4) {
         /* CLUSTER GETKEYSINSLOT <slot> <count> */
         long long maxkeys, slot;
-        unsigned int numkeys, j;
-        robj **keys;
 
         if (getLongLongFromObjectOrReply(c,c->argv[2],&slot,NULL) != C_OK)
             return;
@@ -4426,19 +4431,16 @@ void clusterCommand(client *c) {
             return;
         }
 
-        /* Avoid allocating more than needed in case of large COUNT argument
-         * and smaller actual number of keys. */
         unsigned int keys_in_slot = countKeysInSlot(slot);
-        if (maxkeys > keys_in_slot) maxkeys = keys_in_slot;
-
-        keys = zmalloc(sizeof(robj*)*maxkeys);
-        numkeys = getKeysInSlot(slot, keys, maxkeys);
+        unsigned int numkeys = maxkeys > keys_in_slot ? keys_in_slot : maxkeys;
         addReplyMultiBulkLen(c,numkeys);
-        for (j = 0; j < numkeys; j++) {
-            addReplyBulk(c,keys[j]);
-            decrRefCount(keys[j]);
+        dictEntry *de = server.cluster->slots_to_keys[slot].head;
+        for (unsigned int j = 0; j < numkeys; j++) {
+            serverAssert(de != NULL);
+            sds sdskey = dictGetKey(de);
+            addReplyBulkCBuffer(c, sdskey, sdslen(sdskey));
+            de = dictEntryNextInSlot(de);
         }
-        zfree(keys);
     } else if (!strcasecmp(c->argv[1]->ptr,"forget") && c->argc == 3) {
         /* CLUSTER FORGET <NODE ID> */
         clusterNode *n = clusterLookupNode(c->argv[2]->ptr);
@@ -5526,4 +5528,90 @@ int clusterRedirectBlockedClientIfNeeded(client *c) {
         dictReleaseIterator(di);
     }
     return 0;
+}
+
+/* Slot to Key API. This is used by Redis Cluster in order to obtain in
+ * a fast way a key that belongs to a specified hash slot. This is useful
+ * while rehashing the cluster and in other conditions when we need to
+ * understand if we have keys for a given hash slot. */
+
+void slotToKeyAddEntry(dictEntry *entry) {
+    sds key = entry->key;
+    unsigned int hashslot = keyHashSlot(key, sdslen(key));
+    server.cluster->slots_to_keys[hashslot].count++;
+
+    /* Insert entry before the first element in the list. */
+    dictEntry *first = server.cluster->slots_to_keys[hashslot].head;
+    dictEntryNextInSlot(entry) = first;
+    if (first != NULL) {
+        serverAssert(dictEntryPrevInSlot(first) == NULL);
+        dictEntryPrevInSlot(first) = entry;
+    }
+    serverAssert(dictEntryPrevInSlot(entry) == NULL);
+    server.cluster->slots_to_keys[hashslot].head = entry;
+}
+
+void slotToKeyDelEntry(dictEntry *entry) {
+    sds key = entry->key;
+    unsigned int hashslot = keyHashSlot(key, sdslen(key));
+    server.cluster->slots_to_keys[hashslot].count--;
+
+    /* Connect previous and next entries to each other. */
+    dictEntry *next = dictEntryNextInSlot(entry);
+    dictEntry *prev = dictEntryPrevInSlot(entry);
+    if (next != NULL) {
+        dictEntryPrevInSlot(next) = prev;
+    }
+    if (prev != NULL) {
+        dictEntryNextInSlot(prev) = next;
+    } else {
+        /* The removed entry was the first in the list. */
+        serverAssert(server.cluster->slots_to_keys[hashslot].head == entry);
+        server.cluster->slots_to_keys[hashslot].head = next;
+    }
+}
+
+/* Updates neighbour entries when an entry has been replaced (e.g. reallocated
+ * during active defrag). */
+void slotToKeyReplaceEntry(dictEntry *entry) {
+    dictEntry *next = dictEntryNextInSlot(entry);
+    dictEntry *prev = dictEntryPrevInSlot(entry);
+    if (next != NULL) {
+        dictEntryPrevInSlot(next) = entry;
+    }
+    if (prev != NULL) {
+        dictEntryNextInSlot(prev) = entry;
+    } else {
+        /* The replaced entry was the first in the list. */
+        sds key = entry->key;
+        unsigned int hashslot = keyHashSlot(key, sdslen(key));
+        server.cluster->slots_to_keys[hashslot].head = entry;
+    }
+}
+
+/* Empty the slots-keys map of Redis Cluster. */
+void slotToKeyFlush(void) {
+    memset(&server.cluster->slots_to_keys, 0,
+           sizeof(server.cluster->slots_to_keys));
+}
+
+
+/* Remove all the keys in the specified hash slot.
+ * The number of removed items is returned. */
+unsigned int delKeysInSlot(unsigned int hashslot) {
+    unsigned int j = 0;
+    dictEntry *de = server.cluster->slots_to_keys[hashslot].head;
+    while (de != NULL) {
+        sds sdskey = dictGetKey(de);
+        de = dictEntryNextInSlot(de);
+        robj *key = createStringObject(sdskey, sdslen(sdskey));
+        dbDelete(&server.db[0], key);
+        decrRefCount(key);
+        j++;
+    }
+    return j;
+}
+
+unsigned int countKeysInSlot(unsigned int hashslot) {
+    return server.cluster->slots_to_keys[hashslot].count;
 }

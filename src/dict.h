@@ -52,8 +52,13 @@ typedef struct dictEntry {
         int64_t s64;
         double d;
     } v;
-    struct dictEntry *next;
+    struct dictEntry *next;     /* Next entry in the same hash bucket. */
+    void *metadata[];           /* An arbitrary number of bytes (starting at a
+                                 * pointer-aligned address) of size as returned
+                                 * by dictType's dictEntryMetadataBytes(). */
 } dictEntry;
+
+typedef struct dict dict;
 
 typedef struct dictType {
     uint64_t (*hashFunction)(const void *key);
@@ -62,6 +67,9 @@ typedef struct dictType {
     int (*keyCompare)(void *privdata, const void *key1, const void *key2);
     void (*keyDestructor)(void *privdata, void *key);
     void (*valDestructor)(void *privdata, void *obj);
+    /* Allow a dictEntry to carry extra caller-defined metadata.  The
+     * extra memory is initialized to 0 when a dictEntry is allocated. */
+    size_t (*dictEntryMetadataBytes)(dict *d);
 } dictType;
 
 /* This is our hash table structure. Every dictionary has two of this as we
@@ -73,13 +81,13 @@ typedef struct dictht {
     unsigned long used;
 } dictht;
 
-typedef struct dict {
+struct dict {
     dictType *type;
     void *privdata;
     dictht ht[2];
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
     unsigned long iterators; /* number of iterators currently running */
-} dict;
+};
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
  * dictAdd, dictFind, and other functions against the dictionary even while
@@ -95,7 +103,7 @@ typedef struct dictIterator {
 } dictIterator;
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
-typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
+typedef void (dictScanBucketFunction)(dict *d, dictEntry **bucketref);
 
 /* This is the initial size of every hash table */
 #define DICT_HT_INITIAL_SIZE     4
@@ -136,6 +144,10 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
     (((d)->type->keyCompare) ? \
         (d)->type->keyCompare((d)->privdata, key1, key2) : \
         (key1) == (key2))
+
+#define dictMetadata(entry) (&(entry)->metadata)
+#define dictMetadataSize(d) ((d)->type->dictEntryMetadataBytes \
+                             ? (d)->type->dictEntryMetadataBytes(d) : 0)
 
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
 #define dictGetKey(he) ((he)->key)

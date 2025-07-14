@@ -82,8 +82,8 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
+        if (server.cluster_enabled) slotToKeyDelEntry(de);
         dictFreeUnlinkedEntry(db->dict,de);
-        if (server.cluster_enabled) slotToKeyDel(key);
         return 1;
     } else {
         return 0;
@@ -99,18 +99,6 @@ void emptyDbAsync(redisDb *db) {
     db->expires = dictCreate(&keyptrDictType,NULL);
     atomicIncr(lazyfree_objects,dictSize(oldht1));
     bioCreateBackgroundJob(BIO_LAZY_FREE,NULL,oldht1,oldht2);
-}
-
-/* Empty the slots-keys map of Redis CLuster by creating a new empty one
- * and scheduiling the old for lazy freeing. */
-void slotToKeyFlushAsync(void) {
-    rax *old = server.cluster->slots_to_keys;
-
-    server.cluster->slots_to_keys = raxNew();
-    memset(server.cluster->slots_keys_count,0,
-           sizeof(server.cluster->slots_keys_count));
-    atomicIncr(lazyfree_objects,old->numele);
-    bioCreateBackgroundJob(BIO_LAZY_FREE,NULL,NULL,old);
 }
 
 /* Release objects from the lazyfree thread. It's just decrRefCount()
@@ -130,12 +118,4 @@ void lazyfreeFreeDatabaseFromBioThread(dict *ht1, dict *ht2) {
     dictRelease(ht1);
     dictRelease(ht2);
     atomicDecr(lazyfree_objects,numkeys);
-}
-
-/* Release the skiplist mapping Redis Cluster keys to slots in the
- * lazyfree thread. */
-void lazyfreeFreeSlotsMapFromBioThread(rax *rt) {
-    size_t len = rt->numele;
-    raxFree(rt);
-    atomicDecr(lazyfree_objects,len);
 }

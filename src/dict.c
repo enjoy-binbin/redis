@@ -307,7 +307,11 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * system it is more likely that recently added entries are accessed
      * more frequently. */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-    entry = zmalloc(sizeof(*entry));
+    size_t metasize = dictMetadataSize(d);
+    entry = zmalloc(sizeof(*entry) + metasize);
+    if (metasize > 0) {
+        memset(dictMetadata(entry), 0, metasize);
+    }
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
@@ -850,7 +854,7 @@ unsigned long dictScan(dict *d,
         m0 = t0->sizemask;
 
         /* Emit entries at cursor */
-        if (bucketfn) bucketfn(privdata, &t0->table[v & m0]);
+        if (bucketfn) bucketfn(d, &t0->table[v & m0]);
         de = t0->table[v & m0];
         while (de) {
             next = de->next;
@@ -881,7 +885,7 @@ unsigned long dictScan(dict *d,
         m1 = t1->sizemask;
 
         /* Emit entries at cursor */
-        if (bucketfn) bucketfn(privdata, &t0->table[v & m0]);
+        if (bucketfn) bucketfn(d, &t0->table[v & m0]);
         de = t0->table[v & m0];
         while (de) {
             next = de->next;
@@ -893,7 +897,7 @@ unsigned long dictScan(dict *d,
          * of the index pointed to by the cursor in the smaller table */
         do {
             /* Emit entries at cursor */
-            if (bucketfn) bucketfn(privdata, &t1->table[v & m1]);
+            if (bucketfn) bucketfn(d, &t1->table[v & m1]);
             de = t1->table[v & m1];
             while (de) {
                 next = de->next;

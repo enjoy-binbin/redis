@@ -132,6 +132,22 @@ typedef struct clusterNode {
     list *fail_reports;         /* List of nodes signaling this as failing */
 } clusterNode;
 
+/* State for the Slot to Key API, for a single slot. The keys in the same slot
+ * are linked together using dictEntry metadata. See also "Slot to Key API" in
+ * cluster.c. */
+struct clusterSlotToKeys {
+    uint64_t count;             /* Number of keys in the slot. */
+    dictEntry *head;            /* The first key-value entry in the slot. */
+};
+typedef struct clusterSlotToKeys clusterSlotsToKeysData[CLUSTER_SLOTS];
+
+/* Dict entry metadata for cluster mode, used for the Slot to Key API to form a
+ * linked list of the entries belonging to the same slot. */
+typedef struct clusterDictEntryMetadata {
+    dictEntry *prev;            /* Prev entry with key in the same slot */
+    dictEntry *next;            /* Next entry with key in the same slot */
+} clusterDictEntryMetadata;
+
 typedef struct clusterState {
     clusterNode *myself;  /* This node */
     uint64_t currentEpoch;
@@ -142,8 +158,7 @@ typedef struct clusterState {
     clusterNode *migrating_slots_to[CLUSTER_SLOTS];
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
     clusterNode *slots[CLUSTER_SLOTS];
-    uint64_t slots_keys_count[CLUSTER_SLOTS];
-    rax *slots_to_keys;
+    clusterSlotsToKeysData slots_to_keys;
     /* The following fields are used to take the slave state on elections. */
     mstime_t failover_auth_time; /* Time of previous or next election. */
     int failover_auth_count;    /* Number of votes received so far. */
@@ -269,5 +284,11 @@ typedef struct {
 clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, int argc, int *hashslot, int *ask);
 int clusterRedirectBlockedClientIfNeeded(client *c);
 void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_code);
+void slotToKeyAddEntry(dictEntry *entry);
+void slotToKeyDelEntry(dictEntry *entry);
+void slotToKeyReplaceEntry(dictEntry *entry);
+void slotToKeyCopyToBackup(clusterSlotsToKeysData *backup);
+void slotToKeyRestoreBackup(clusterSlotsToKeysData *backup);
+void slotToKeyFlush(void);
 
 #endif /* __CLUSTER_H */

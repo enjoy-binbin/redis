@@ -35,6 +35,7 @@
  */
 
 #include "server.h"
+#include "cluster.h"
 #include <time.h>
 #include <assert.h>
 #include <stddef.h>
@@ -427,12 +428,15 @@ void defragScanCallback(void *privdata, const dictEntry *de) {
 
 /* Defrag scan callback for for each hash table bicket,
  * used in order to defrag the dictEntry allocations. */
-void defragDictBucketCallback(void *privdata, dictEntry **bucketref) {
-    UNUSED(privdata);
+void defragDictBucketCallback(dict *d, dictEntry **bucketref) {
     while(*bucketref) {
         dictEntry *de = *bucketref, *newde;
         if ((newde = activeDefragAlloc(de))) {
             *bucketref = newde;
+            if (server.cluster_enabled && d->type == dictType) {
+                /* Cluster keyspace dict. Update slot-to-entries mapping. */
+                slotToKeyReplaceEntry(newde);
+            }
         }
         bucketref = &(*bucketref)->next;
     }
