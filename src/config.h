@@ -39,8 +39,12 @@
 #include <features.h>
 #endif
 
+#if defined(__APPLE__) && defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
+#define MAC_OS_10_6_DETECTED
+#endif
+
 /* Define redis_fstat to fstat or fstat64() */
-#if defined(__APPLE__) && !defined(MAC_OS_X_VERSION_10_6)
+#if defined(__APPLE__) && !defined(MAC_OS_10_6_DETECTED)
 #define redis_fstat fstat64
 #define redis_stat stat64
 #else
@@ -59,11 +63,6 @@
 /* Test for task_info() */
 #if defined(__APPLE__)
 #define HAVE_TASKINFO 1
-#endif
-
-/* Test for backtrace() */
-#if defined(__APPLE__) || (defined(__linux__) && defined(__GLIBC__))
-#define HAVE_BACKTRACE 1
 #endif
 
 /* MSG_NOSIGNAL. */
