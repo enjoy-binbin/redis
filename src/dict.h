@@ -53,9 +53,6 @@ typedef struct dictEntry {
         double d;
     } v;
     struct dictEntry *next;     /* Next entry in the same hash bucket. */
-    void *metadata[];           /* An arbitrary number of bytes (starting at a
-                                 * pointer-aligned address) of size as returned
-                                 * by dictType's dictEntryMetadataBytes(). */
 } dictEntry;
 
 typedef struct dict dict;
@@ -67,9 +64,6 @@ typedef struct dictType {
     int (*keyCompare)(void *privdata, const void *key1, const void *key2);
     void (*keyDestructor)(void *privdata, void *key);
     void (*valDestructor)(void *privdata, void *obj);
-    /* Allow a dictEntry to carry extra caller-defined metadata.  The
-     * extra memory is initialized to 0 when a dictEntry is allocated. */
-    size_t (*dictEntryMetadataBytes)(dict *d);
 } dictType;
 
 /* This is our hash table structure. Every dictionary has two of this as we
@@ -101,6 +95,16 @@ typedef struct dictIterator {
     /* unsafe iterator fingerprint for misuse detection. */
     long long fingerprint;
 } dictIterator;
+
+typedef struct dictStats {
+    int htidx;
+    unsigned long buckets;
+    unsigned long maxChainLen;
+    unsigned long totalChainLen;
+    unsigned long htSize;
+    unsigned long htUsed;
+    unsigned long *clvector;
+} dictStats;
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 typedef void (dictScanBucketFunction)(dict *d, dictEntry **bucketref);
@@ -145,10 +149,6 @@ typedef void (dictScanBucketFunction)(dict *d, dictEntry **bucketref);
         (d)->type->keyCompare((d)->privdata, key1, key2) : \
         (key1) == (key2))
 
-#define dictMetadata(entry) (&(entry)->metadata)
-#define dictMetadataSize(d) ((d)->type->dictEntryMetadataBytes \
-                             ? (d)->type->dictEntryMetadataBytes(d) : 0)
-
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
 #define dictGetKey(he) ((he)->key)
 #define dictGetVal(he) ((he)->v.val)
@@ -159,9 +159,13 @@ typedef void (dictScanBucketFunction)(dict *d, dictEntry **bucketref);
 #define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
+#define DICTHT_SIZE(d, htidx)((d)->ht[(htidx)].size)
+
 /* API */
 dict *dictCreate(dictType *type, void *privDataPtr);
+dict **dictCreateMultiple(dictType *type, int count);
 int dictExpand(dict *d, unsigned long size);
+int dictTryExpand(dict *d, unsigned long size);
 int dictAdd(dict *d, void *key, void *val);
 dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing);
 dictEntry *dictAddOrFind(dict *d, void *key);
@@ -173,6 +177,7 @@ void dictRelease(dict *d);
 dictEntry * dictFind(dict *d, const void *key);
 void *dictFetchValue(dict *d, const void *key);
 int dictResize(dict *d);
+size_t dictEntryMemUsage(void);
 dictIterator *dictGetIterator(dict *d);
 dictIterator *dictGetSafeIterator(dict *d);
 void dictInitIterator(dictIterator *iter, dict *d);
@@ -183,7 +188,7 @@ void dictReleaseIterator(dictIterator *iter);
 dictEntry *dictGetRandomKey(dict *d);
 dictEntry *dictGetFairRandomKey(dict *d);
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
-void dictGetStats(char *buf, size_t bufsize, dict *d);
+void dictGetStats(char *buf, size_t bufsize, dict *d, int full);
 uint64_t dictGenHashFunction(const void *key, int len);
 uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len);
 void dictEmpty(dict *d, void(callback)(void*));
@@ -196,6 +201,11 @@ uint8_t *dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
 uint64_t dictGetHash(dict *d, const void *key);
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
+
+size_t dictGetStatsMsg(char *buf, size_t bufsize, dictStats *stats, int full);
+dictStats* dictGetStatsHt(dict *d, int htidx, int full);
+void dictCombineStats(dictStats *from, dictStats *into);
+void dictFreeStats(dictStats *stats);
 
 /* Hash table types */
 extern dictType dictTypeHeapStringCopyKey;

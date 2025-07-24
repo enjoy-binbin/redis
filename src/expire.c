@@ -72,6 +72,18 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
     }
 }
 
+static inline int isExpiryDictValidForSamplingCb(dict *d) {
+    long long numkeys = dictSize(d);
+    unsigned long buckets = dictSlots(d);
+    /* When there are less than 1% filled buckets, sampling the key
+     * space is expensive, so stop here waiting for better times...
+     * The dictionary will be resized asap. */
+    if (buckets > DICT_HT_INITIAL_SIZE && (numkeys * 100/buckets < 1)) {
+        return C_ERR;
+    }
+    return C_OK;
+}
+
 /* Try to expire a few timed out keys. The algorithm used is adaptive and
  * will use few CPU cycles if there are few expiring keys, otherwise
  * it will get more aggressive to avoid that too much memory is used by
@@ -158,24 +170,17 @@ void activeExpireCycle(int type) {
         /* Continue to expire if at the end of the cycle more than 25%
          * of the keys were expired. */
         do {
-            unsigned long num, slots;
+            unsigned long num;
             long long now, ttl_sum;
             int ttl_samples;
             iteration++;
 
             /* If there is nothing to expire try next DB ASAP. */
-            if ((num = dictSize(db->expires)) == 0) {
+            if ((num = dbSize(db, DB_EXPIRES)) == 0) {
                 db->avg_ttl = 0;
                 break;
             }
-            slots = dictSlots(db->expires);
             now = mstime();
-
-            /* When there are less than 1% filled slots getting random
-             * keys is expensive, so stop here waiting for better times...
-             * The dictionary will be resized asap. */
-            if (num && slots > DICT_HT_INITIAL_SIZE &&
-                (num*100/slots < 1)) break;
 
             /* The main collection cycle. Sample random keys among keys
              * with an expire set, checking for expired ones. */
@@ -190,7 +195,7 @@ void activeExpireCycle(int type) {
                 dictEntry *de;
                 long long ttl;
 
-                if ((de = dictGetRandomKey(db->expires)) == NULL) break;
+                if ((de = dictGetFairRandomKey(db->expires[getFairRandomSlot(db, DB_EXPIRES)])) == NULL) break;
                 ttl = dictGetSignedIntegerVal(de)-now;
                 if (activeExpireCycleTryExpire(db,de,now)) expired++;
                 if (ttl > 0) {
@@ -300,7 +305,7 @@ void expireSlaveKeys(void) {
         while(dbids && dbid < server.dbnum) {
             if ((dbids & 1) != 0) {
                 redisDb *db = server.db+dbid;
-                dictEntry *expire = dictFind(db->expires,keyname);
+                dictEntry *expire = dictFind(db->expires[getKeySlot(keyname)],keyname);
                 int expired = 0;
 
                 if (expire &&

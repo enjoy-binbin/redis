@@ -42,6 +42,11 @@
 
 #ifdef HAVE_DEFRAG
 
+typedef struct defragCtx {
+    redisDb *db;
+    int slot;
+} defragCtx;
+
 /* this method was added to jemalloc in order to help us understand which
  * pointers are worthwhile moving and which aren't */
 int je_get_defrag_hint(void* ptr, int *bin_util, int *run_util);
@@ -273,7 +278,7 @@ dictEntry* replaceSateliteDictKeyPtrAndOrDefragDictEntry(dict *d, sds oldkey, sd
 /* for each key we scan in the main dict, this function will attempt to defrag
  * all the various pointers it has. Returns a stat of how many pointers were
  * moved. */
-int defragKey(redisDb *db, dictEntry *de) {
+int defragKey(defragCtx *ctx, dictEntry *de) {
     sds keysds = dictGetKey(de);
     robj *newob, *ob;
     unsigned char *newzl;
@@ -281,23 +286,27 @@ int defragKey(redisDb *db, dictEntry *de) {
     dictIterator *di;
     int defragged = 0;
     sds newsds;
+    redisDb *db = ctx->db;
+    int slot = ctx->slot;
 
     /* Try to defrag the key name. */
     newsds = activeDefragSds(keysds);
-    if (newsds)
-        defragged++, de->key = newsds;
-    if (dictSize(db->expires)) {
-         /* Dirty code:
-          * I can't search in db->expires for that key after i already released
-          * the pointer it holds it won't be able to do the string compare */
-        uint64_t hash = dictGetHash(db->dict, de->key);
-        replaceSateliteDictKeyPtrAndOrDefragDictEntry(db->expires, keysds, newsds, hash, &defragged);
+    if (newsds) {
+        defragged++;
+        dictSetKey(db->dict[slot], de, newsds);
+        if (dbSize(db, DB_EXPIRES)) {
+             /* Dirty code:
+              * I can't search in db->expires for that key after i already released
+              * the pointer it holds it won't be able to do the string compare */
+            uint64_t hash = dictGetHash(db->expires[slot], newsds);
+            replaceSateliteDictKeyPtrAndOrDefragDictEntry(db->expires[slot], keysds, newsds, hash, &defragged);
+        }
     }
 
     /* Try to defrag robj and / or string value. */
     ob = dictGetVal(de);
     if ((newob = activeDefragStringOb(ob, &defragged))) {
-        de->v.val = newob;
+        dictSetVal(db->dict[slot], de, newob);
         ob = newob;
     }
 
@@ -418,7 +427,7 @@ int defragKey(redisDb *db, dictEntry *de) {
 
 /* Defrag scan callback for the main db dictionary. */
 void defragScanCallback(void *privdata, const dictEntry *de) {
-    int defragged = defragKey((redisDb*)privdata, (dictEntry*)de);
+    int defragged = defragKey((defragCtx*)privdata, (dictEntry*)de);
     server.stat_active_defrag_hits += defragged;
     if(defragged)
         server.stat_active_defrag_key_hits++;
@@ -480,7 +489,10 @@ float getAllocatorFragmentation(size_t *out_frag_bytes) {
  * This works in a similar way to activeExpireCycle, in the sense that
  * we do incremental work across calls. */
 void activeDefragCycle(void) {
+    static defragCtx ctx;
+    static int slot = -1;
     static int current_db = -1;
+    static int defrag_later_item_in_progress = 0;
     static unsigned long cursor = 0;
     static redisDb *db = NULL;
     static long long start_scan, start_stat;
@@ -531,7 +543,7 @@ void activeDefragCycle(void) {
     if (timelimit <= 0) timelimit = 1;
 
     do {
-        if (!cursor) {
+        if (!cursor && (slot < 0)) {
             /* Move on to next database, and stop if we reached the last one. */
             if (++current_db >= server.dbnum) {
                 long long now = ustime();
@@ -544,7 +556,10 @@ void activeDefragCycle(void) {
                 start_scan = now;
                 current_db = -1;
                 cursor = 0;
+                slot = -1;
+                defrag_later_item_in_progress = 0;
                 db = NULL;
+                memset(&ctx, -1, sizeof(ctx));
                 server.active_defrag_running = 0;
                 return;
             }
@@ -556,21 +571,37 @@ void activeDefragCycle(void) {
 
             db = &server.db[current_db];
             cursor = 0;
+            slot = findSlotByKeyIndex(db, 1, DB_MAIN);
+            defrag_later_item_in_progress = 0;
+            ctx.db = db;
+            ctx.slot = slot;
         }
 
         do {
-            cursor = dictScan(db->dict, cursor, defragScanCallback, defragDictBucketCallback, db);
-            /* Once in 16 scan iterations, or 1000 pointer reallocations
-             * (if we have a lot of pointers in one hash bucket), check if we
-             * reached the tiem limit. */
-            if (cursor && (++iterations > 16 || server.stat_active_defrag_hits - defragged > 1000)) {
-                if ((ustime() - start) > timelimit) {
-                    return;
+            if (!defrag_later_item_in_progress) {
+                cursor = dictScan(db->dict[slot], cursor, defragScanCallback, defragDictBucketCallback, db);
+                /* Once in 16 scan iterations, or 1000 pointer reallocations
+                 * (if we have a lot of pointers in one hash bucket), check if we
+                 * reached the tiem limit. */
+                if (cursor && (++iterations > 16 || server.stat_active_defrag_hits - defragged > 1000)) {
+                    if ((ustime() - start) > timelimit) {
+                        return;
+                    }
+                    iterations = 0;
+                    defragged = server.stat_active_defrag_hits;
                 }
-                iterations = 0;
-                defragged = server.stat_active_defrag_hits;
+
+                if (!cursor) {
+                    /* Move to the next slot only if regular and large item scanning has been completed. */
+                    if (listLength(db->defrag_later) > 0) {
+                        defrag_later_item_in_progress = 1;
+                        continue;
+                    }
+                    slot = dbGetNextNonEmptySlot(db, slot, DB_MAIN);
+                    ctx.slot = slot;
+                }
             }
-        } while(cursor);
+       } while(cursor || slot > 0);
     } while(1);
 }
 

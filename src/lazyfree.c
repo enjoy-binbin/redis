@@ -52,17 +52,26 @@ size_t lazyfreeGetFreeEffort(robj *obj) {
  * will be reclaimed in a different bio.c thread. */
 #define LAZYFREE_THRESHOLD 64
 int dbAsyncDelete(redisDb *db, robj *key) {
+    int slot = getKeySlot(key->ptr);
+
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
-    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
+    if (dictSize(db->expires[slot]) > 0) {
+        if (dictDelete(db->expires[slot],key->ptr) == DICT_OK) {
+            cumulativeKeyCountAdd(db, slot, -1, DB_EXPIRES);
+            db->sub_dict[DB_EXPIRES].key_count--;
+        }
+    }
 
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
-    dictEntry *de = dictUnlink(db->dict,key->ptr);
+    dictEntry *de = dictUnlink(db->dict[slot],key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
         size_t free_effort = lazyfreeGetFreeEffort(val);
+        cumulativeKeyCountAdd(db, slot, -1, DB_MAIN);
+        db->sub_dict[DB_MAIN].key_count--;
 
         /* If releasing the object is too much work, do it in the background
          * by adding the object to the lazy free list.
@@ -75,15 +84,14 @@ int dbAsyncDelete(redisDb *db, robj *key) {
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
             atomicIncr(lazyfree_objects,1);
             bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);
-            dictSetVal(db->dict,de,NULL);
+            dictSetVal(db->dict[slot],de,NULL);
         }
     }
 
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
-        if (server.cluster_enabled) slotToKeyDelEntry(de);
-        dictFreeUnlinkedEntry(db->dict,de);
+        dictFreeUnlinkedEntry(db->dict[slot],de);
         return 1;
     } else {
         return 0;
@@ -94,11 +102,14 @@ int dbAsyncDelete(redisDb *db, robj *key) {
  * create a new empty set of hash tables and scheduling the old ones for
  * lazy freeing. */
 void emptyDbAsync(redisDb *db) {
-    dict *oldht1 = db->dict, *oldht2 = db->expires;
-    db->dict = dictCreate(&dbDictType,NULL);
-    db->expires = dictCreate(&keyptrDictType,NULL);
-    atomicIncr(lazyfree_objects,dictSize(oldht1));
-    bioCreateBackgroundJob(BIO_LAZY_FREE,NULL,oldht1,oldht2);
+    dict **oldDict = db->dict;
+    dict **oldExpires = db->expires;
+    atomicIncr(lazyfree_objects,dbSize(db, DB_MAIN));
+    db->dict = dictCreateMultiple(&dbDictType, db->dict_count);
+    db->expires = dictCreateMultiple(&dbExpiresDictType, db->dict_count);
+    int *count = zmalloc(sizeof(int));
+    *count = db->dict_count;
+    bioCreateBackgroundJob(BIO_LAZY_FREE,count,oldDict,oldExpires);
 }
 
 /* Release objects from the lazyfree thread. It's just decrRefCount()
@@ -113,9 +124,17 @@ void lazyfreeFreeObjectFromBioThread(robj *o) {
  * when the database was logically deleted. 'sl' is a skiplist used by
  * Redis Cluster in order to take the hash slots -> keys mapping. This
  * may be NULL if Redis Cluster is disabled. */
-void lazyfreeFreeDatabaseFromBioThread(dict *ht1, dict *ht2) {
-    size_t numkeys = dictSize(ht1);
-    dictRelease(ht1);
-    dictRelease(ht2);
-    atomicDecr(lazyfree_objects,numkeys);
+void lazyfreeFreeDatabaseFromBioThread(void *arg1, void *arg2, void *arg3) {
+    int *dictCount = (int *) arg1;
+    dict **ht1 = (dict **) arg2;
+    dict **ht2 = (dict **) arg3;
+    for (int i=0; i<*dictCount; i++) {
+        size_t numkeys = dictSize(ht1[i]);
+        dictRelease(ht1[i]);
+        dictRelease(ht2[i]);
+        atomicDecr(lazyfree_objects,numkeys);
+    }
+    zfree(ht1);
+    zfree(ht2);
+    zfree(dictCount);
 }

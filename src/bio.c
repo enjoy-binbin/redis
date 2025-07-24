@@ -85,7 +85,7 @@ struct bio_job {
 
 void *bioProcessBackgroundJobs(void *arg);
 void lazyfreeFreeObjectFromBioThread(robj *o);
-void lazyfreeFreeDatabaseFromBioThread(dict *ht1, dict *ht2);
+void lazyfreeFreeDatabaseFromBioThread(void *arg1, void *arg2, void *arg3);
 
 /* Make sure we have enough stack to perform all the things we do in the
  * main thread. */
@@ -191,10 +191,10 @@ void *bioProcessBackgroundJobs(void *arg) {
             /* What we free changes depending on what arguments are set:
              * arg1 -> free the object at pointer.
              * arg2 & arg3 -> free two dictionaries (a Redis DB). */
-            if (job->arg1)
+            if (job->arg1 && job->arg2 && job->arg3)
+                lazyfreeFreeDatabaseFromBioThread(job->arg1,job->arg2,job->arg3);
+            else if (job->arg1)
                 lazyfreeFreeObjectFromBioThread(job->arg1);
-            else if (job->arg2 && job->arg3)
-                lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
         }

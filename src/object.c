@@ -875,21 +875,18 @@ struct redisMemOverhead *getMemoryOverheadData(void) {
 
     for (j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
-        long long keyscount = dictSize(db->dict);
-        if (keyscount==0) continue;
+        unsigned long long keyscount = dbSize(db, DB_MAIN);
+        if (keyscount == 0) continue;
 
         mh->total_keys += keyscount;
         mh->db = zrealloc(mh->db,sizeof(mh->db[0])*(mh->num_dbs+1));
         mh->db[mh->num_dbs].dbid = j;
 
-        mem = dictSize(db->dict) * sizeof(dictEntry) +
-              dictSlots(db->dict) * sizeof(dictEntry*) +
-              dictSize(db->dict) * sizeof(robj);
+        mem = dbMemUsage(db, DB_MAIN);
         mh->db[mh->num_dbs].overhead_ht_main = mem;
         mem_total+=mem;
 
-        mem = dictSize(db->expires) * sizeof(dictEntry) +
-              dictSlots(db->expires) * sizeof(dictEntry*);
+        mem = dbMemUsage(db, DB_EXPIRES);
         mh->db[mh->num_dbs].overhead_ht_expires = mem;
         mem_total+=mem;
 
@@ -1000,7 +997,7 @@ sds getMemoryDoctorReport(void) {
 robj *objectCommandLookup(client *c, robj *key) {
     dictEntry *de;
 
-    if ((de = dictFind(c->db->dict,key->ptr)) == NULL) return NULL;
+    if ((de = dbFind(c->db, key->ptr, DB_MAIN)) == NULL) return NULL;
     return (robj*) dictGetVal(de);
 }
 

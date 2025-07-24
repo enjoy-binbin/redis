@@ -117,6 +117,16 @@ dict *dictCreate(dictType *type,
     return d;
 }
 
+/* Create an array of dictionaries */
+dict **dictCreateMultiple(dictType *type, int count)
+{
+    dict **d = zmalloc(sizeof(dict*) * count);
+    for (int i = 0; i < count; i++) {
+        d[i] = dictCreate(type, NULL);
+    }
+    return d;
+}
+
 /* Initialize the hash table */
 int _dictInit(dict *d, dictType *type,
         void *privDataPtr)
@@ -143,9 +153,12 @@ int dictResize(dict *d)
     return dictExpand(d, minimal);
 }
 
-/* Expand or create the hash table */
-int dictExpand(dict *d, unsigned long size)
+/* Expand or create the hash table,
+ * when malloc_failed is non-NULL, it'll avoid panic if malloc fails (in which case it'll be set to 1).
+ * Returns DICT_OK if expand was performed, and DICT_ERR if skipped. */
+int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 {
+    if (malloc_failed) *malloc_failed = 0;
     dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
 
@@ -160,7 +173,14 @@ int dictExpand(dict *d, unsigned long size)
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
     n.sizemask = realsize-1;
-    n.table = zcalloc(realsize*sizeof(dictEntry*));
+    if (malloc_failed) {
+        n.table = ztrycalloc(realsize*sizeof(dictEntry*));
+        *malloc_failed = n.table == NULL;
+        if (*malloc_failed)
+            return DICT_ERR;
+    } else
+        n.table = zcalloc(realsize*sizeof(dictEntry*));
+
     n.used = 0;
 
     /* Is this the first initialization? If so it's not really a rehashing
@@ -174,6 +194,18 @@ int dictExpand(dict *d, unsigned long size)
     d->ht[1] = n;
     d->rehashidx = 0;
     return DICT_OK;
+}
+
+/* return DICT_ERR if expand was not performed */
+int dictExpand(dict *d, unsigned long size) {
+    return _dictExpand(d, size, NULL);
+}
+
+/* return DICT_ERR if expand failed due to memory allocation failure */
+int dictTryExpand(dict *d, unsigned long size) {
+    int malloc_failed;
+    _dictExpand(d, size, &malloc_failed);
+    return malloc_failed? DICT_ERR : DICT_OK;
 }
 
 /* Performs N steps of incremental rehashing. Returns 1 if there are still
@@ -307,11 +339,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * system it is more likely that recently added entries are accessed
      * more frequently. */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-    size_t metasize = dictMetadataSize(d);
-    entry = zmalloc(sizeof(*entry) + metasize);
-    if (metasize > 0) {
-        memset(dictMetadata(entry), 0, metasize);
-    }
+    entry = zmalloc(sizeof(*entry));
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
@@ -503,6 +531,10 @@ void *dictFetchValue(dict *d, const void *key) {
 
     he = dictFind(d,key);
     return he ? dictGetVal(he) : NULL;
+}
+
+size_t dictEntryMemUsage(void) {
+    return sizeof(dictEntry);
 }
 
 /* A fingerprint is a 64 bit number that represents the state of the dictionary
@@ -1073,80 +1105,112 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 /* ------------------------------- Debugging ---------------------------------*/
 
 #define DICT_STATS_VECTLEN 50
-size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
-    unsigned long i, slots = 0, chainlen, maxchainlen = 0;
-    unsigned long totchainlen = 0;
-    unsigned long clvector[DICT_STATS_VECTLEN];
-    size_t l = 0;
+void dictFreeStats(dictStats *stats) {
+    zfree(stats->clvector);
+    zfree(stats);
+}
 
-    if (ht->used == 0) {
-        return snprintf(buf,bufsize,
-            "No stats available for empty dictionaries\n");
+void dictCombineStats(dictStats *from, dictStats *into) {
+    into->buckets += from->buckets;
+    into->maxChainLen = (from->maxChainLen > into->maxChainLen) ? from->maxChainLen : into->maxChainLen;
+    into->totalChainLen += from->totalChainLen;
+    into->htSize += from->htSize;
+    into->htUsed += from->htUsed;
+    for (int i = 0; i < DICT_STATS_VECTLEN; i++) {
+        into->clvector[i] += from->clvector[i];
     }
+}
 
+dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
+    unsigned long *clvector = zcalloc(sizeof(unsigned long) * DICT_STATS_VECTLEN);
+    dictStats *stats = zcalloc(sizeof(dictStats));
+    stats->htidx = htidx;
+    stats->clvector = clvector;
+    stats->htSize = dictSlots(d);
+    stats->htUsed = dictSize(d);
+    if (!full) return stats;
     /* Compute stats. */
-    for (i = 0; i < DICT_STATS_VECTLEN; i++) clvector[i] = 0;
-    for (i = 0; i < ht->size; i++) {
+    for (unsigned long i = 0; i < DICTHT_SIZE(d, htidx); i++) {
+
         dictEntry *he;
 
-        if (ht->table[i] == NULL) {
+        if (d->ht[htidx].table[i] == NULL) {
             clvector[0]++;
             continue;
         }
-        slots++;
+        stats->buckets++;
         /* For each hash entry on this slot... */
-        chainlen = 0;
-        he = ht->table[i];
+        unsigned long chainlen = 0;
+        he = d->ht[htidx].table[i];
         while(he) {
             chainlen++;
             he = he->next;
         }
         clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
-        if (chainlen > maxchainlen) maxchainlen = chainlen;
-        totchainlen += chainlen;
+        if (chainlen > stats->maxChainLen) stats->maxChainLen = chainlen;
+        stats->totalChainLen += chainlen;
     }
 
-    /* Generate human readable stats. */
-    l += snprintf(buf+l,bufsize-l,
-        "Hash table %d stats (%s):\n"
-        " table size: %ld\n"
-        " number of elements: %ld\n"
-        " different slots: %ld\n"
-        " max chain length: %ld\n"
-        " avg chain length (counted): %.02f\n"
-        " avg chain length (computed): %.02f\n"
-        " Chain length distribution:\n",
-        tableid, (tableid == 0) ? "main hash table" : "rehashing target",
-        ht->size, ht->used, slots, maxchainlen,
-        (float)totchainlen/slots, (float)ht->used/slots);
+    return stats;
+}
 
-    for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
-        if (clvector[i] == 0) continue;
-        if (l >= bufsize) break;
-        l += snprintf(buf+l,bufsize-l,
-            "   %s%ld: %ld (%.02f%%)\n",
-            (i == DICT_STATS_VECTLEN-1)?">= ":"",
-            i, clvector[i], ((float)clvector[i]/ht->size)*100);
+/* Generates human readable stats. */
+size_t dictGetStatsMsg(char *buf, size_t bufsize, dictStats *stats, int full) {
+    if (stats->htUsed == 0) {
+        return snprintf(buf,bufsize,
+                        "Hash table %d stats (%s):\n"
+                        "No stats available for empty dictionaries\n",
+                        stats->htidx, (stats->htidx == 0) ? "main hash table" : "rehashing target");
+    }
+    size_t l = 0;
+    l += snprintf(buf + l, bufsize - l,
+                  "Hash table %d stats (%s):\n"
+                  " table size: %lu\n"
+                  " number of elements: %lu\n",
+                  stats->htidx, (stats->htidx == 0) ? "main hash table" : "rehashing target",
+                  stats->htSize, stats->htUsed);
+    if (full) {
+        l += snprintf(buf + l, bufsize - l,
+                      " different slots: %lu\n"
+                      " max chain length: %lu\n"
+                      " avg chain length (counted): %.02f\n"
+                      " avg chain length (computed): %.02f\n"
+                      " Chain length distribution:\n",
+                      stats->buckets, stats->maxChainLen,
+                      (float) stats->totalChainLen / stats->buckets, (float) stats->htUsed / stats->buckets);
+
+        for (unsigned long i = 0; i < DICT_STATS_VECTLEN - 1; i++) {
+            if (stats->clvector[i] == 0) continue;
+            if (l >= bufsize) break;
+            l += snprintf(buf + l, bufsize - l,
+                          "   %ld: %ld (%.02f%%)\n",
+                          i, stats->clvector[i], ((float) stats->clvector[i] / stats->htSize) * 100);
+        }
     }
 
-    /* Unlike snprintf(), teturn the number of characters actually written. */
-    if (bufsize) buf[bufsize-1] = '\0';
+    /* Make sure there is a NULL term at the end. */
+    buf[bufsize-1] = '\0';
+    /* Unlike snprintf(), return the number of characters actually written. */
     return strlen(buf);
 }
 
-void dictGetStats(char *buf, size_t bufsize, dict *d) {
+void dictGetStats(char *buf, size_t bufsize, dict *d, int full) {
     size_t l;
     char *orig_buf = buf;
     size_t orig_bufsize = bufsize;
 
-    l = _dictGetStatsHt(buf,bufsize,&d->ht[0],0);
+    dictStats *mainHtStats = dictGetStatsHt(d, 0, full);
+    l = dictGetStatsMsg(buf, bufsize, mainHtStats, full);
+    dictFreeStats(mainHtStats);
     buf += l;
     bufsize -= l;
     if (dictIsRehashing(d) && bufsize > 0) {
-        _dictGetStatsHt(buf,bufsize,&d->ht[1],1);
+        dictStats *rehashHtStats = dictGetStatsHt(d, 1, full);
+        dictGetStatsMsg(buf, bufsize, rehashHtStats, full);
+        dictFreeStats(rehashHtStats);
     }
     /* Make sure there is a NULL term at the end. */
-    if (orig_bufsize) orig_buf[orig_bufsize-1] = '\0';
+    orig_buf[orig_bufsize-1] = '\0';
 }
 
 /* ------------------------------- Benchmark ---------------------------------*/

@@ -55,6 +55,11 @@ void zlibc_free(void *ptr) {
 #endif
 #endif
 
+/* When using the libc allocator, use a minimum allocation size to match the
+ * jemalloc behavior that doesn't return NULL in this case.
+ */
+#define MALLOC_MIN_SIZE(x) ((x) > 0 ? (x) : sizeof(long))
+
 /* Explicitly override malloc/free etc when using tcmalloc. */
 #if defined(USE_TCMALLOC)
 #define malloc(size) tc_malloc(size)
@@ -126,6 +131,27 @@ void zfree_no_tcache(void *ptr) {
 }
 #endif
 
+/* Try allocating memory and zero it, and return NULL if failed.
+ * '*usable' is set to the usable size if non NULL. */
+static inline void *ztrycalloc_usable_internal(size_t size, size_t *usable) {
+    /* Possible overflow, return NULL, so that the caller can panic or handle a failed allocation. */
+    if (size >= SIZE_MAX/2) return NULL;
+    void *ptr = calloc(1, MALLOC_MIN_SIZE(size)+PREFIX_SIZE);
+    if (ptr == NULL) return NULL;
+
+#ifdef HAVE_MALLOC_SIZE
+    size = zmalloc_size(ptr);
+    update_zmalloc_stat_alloc(size);
+    if (usable) *usable = size;
+    return ptr;
+#else
+    *((size_t*)ptr) = size;
+    update_zmalloc_stat_alloc(size+PREFIX_SIZE);
+    if (usable) *usable = size;
+    return (char*)ptr+PREFIX_SIZE;
+#endif
+}
+
 void *zcalloc(size_t size) {
     void *ptr = calloc(1, size+PREFIX_SIZE);
 
@@ -167,6 +193,12 @@ void *zrealloc(void *ptr, size_t size) {
     update_zmalloc_stat_alloc(size);
     return (char*)newptr+PREFIX_SIZE;
 #endif
+}
+
+/* Try allocating memory, and return NULL if failed. */
+void *ztrycalloc(size_t size) {
+    void *ptr = ztrycalloc_usable_internal(size, NULL);
+    return ptr;
 }
 
 /* Provide zmalloc_size() for systems where this function is not provided by

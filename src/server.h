@@ -609,17 +609,31 @@ typedef struct redisObject {
 
 struct evictionPoolEntry; /* Defined in evict.c */
 
+typedef struct dbDictState {
+    list *rehashing;                       /* List of dictionaries in this DB that are currently rehashing. */
+    int resize_cursor;                     /* Cron job uses this cursor to gradually resize dictionaries. */
+    unsigned long long key_count;          /* Total number of keys in this DB. */
+    unsigned long long *slot_size_index;   /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
+} dbDictState;
+
+typedef enum dbKeyType {
+    DB_MAIN,
+    DB_EXPIRES
+} dbKeyType;
+
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
-    dict *dict;                 /* The keyspace for this DB */
-    dict *expires;              /* Timeout of keys with a timeout set */
+    dict **dict;                 /* The keyspace for this DB */
+    dict **expires;              /* Timeout of keys with a timeout set */
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
     dict *ready_keys;           /* Blocked keys that received a PUSH */
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
     int id;                     /* Database ID */
     long long avg_ttl;          /* Average TTL, just for stats */
+    int dict_count;             /* Indicates total number of dictionaires owned by this DB, 1 dict per slot in cluster mode. */
+    dbDictState sub_dict[2];  /* Metadata for main and expires dictionaries */
 } redisDb;
 
 /* Client MULTI/EXEC state */
@@ -1276,6 +1290,19 @@ typedef struct {
     dictIterator *di;
 } setTypeIterator;
 
+typedef struct dbIterator dbIterator;
+
+/* DB iterator specific functions */
+dbIterator *dbIteratorInit(redisDb *db, dbKeyType keyType);
+dbIterator *dbIteratorInitFromSlot(redisDb *db, dbKeyType keyType, int slot);
+dict *dbIteratorNextDict(dbIterator *dbit);
+int dbIteratorGetCurrentSlot(dbIterator *dbit);
+dictEntry *dbIteratorNext(dbIterator *iter);
+
+/* SCAN specific commands for easy cursor manipulation, shared between main code and modules. */
+int getAndClearSlotIdFromCursor(unsigned long long *cursor);
+void addSlotIdToCursor(int slot, unsigned long long *cursor);
+
 /* Structure to hold hash iteration abstraction. Note that iteration over
  * hashes involves both fields and values. Because it is possible that
  * not both are required, store pointers in the iterator to avoid
@@ -1305,11 +1332,11 @@ extern dictType zsetDictType;
 extern dictType clusterNodesDictType;
 extern dictType clusterNodesBlackListDictType;
 extern dictType dbDictType;
+extern dictType dbExpiresDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
 extern dictType replScriptCacheDictType;
-extern dictType keyptrDictType;
 extern dictType modulesDictType;
 
 /*-----------------------------------------------------------------------------
@@ -1655,6 +1682,18 @@ void freeMemoryOverheadData(struct redisMemOverhead *mh);
 #define RESTART_SERVER_GRACEFULLY (1<<0)     /* Do proper shutdown. */
 #define RESTART_SERVER_CONFIG_REWRITE (1<<1) /* CONFIG REWRITE before restart.*/
 int restartServer(int flags, mstime_t delay);
+unsigned long long int dbSize(redisDb *db, dbKeyType keyType);
+int getKeySlot(sds key);
+int calculateKeySlot(sds key);
+unsigned long dbBuckets(redisDb *db, dbKeyType keyType);
+size_t dbMemUsage(redisDb *db, dbKeyType keyType);
+dictEntry *dbFind(redisDb *db, void *key, dbKeyType keyType);
+unsigned long long dbScan(redisDb *db, dbKeyType keyType, unsigned long long cursor, dictScanFunction *fn, int (dictScanValidFunction)(dict *d), void *privdata);
+int dbExpand(const redisDb *db, uint64_t db_size, dbKeyType keyType, int try_expand);
+unsigned long long cumulativeKeyCountRead(redisDb *db, int idx, dbKeyType keyType);
+int getFairRandomSlot(redisDb *db, dbKeyType keyType);
+int dbGetNextNonEmptySlot(redisDb *db, int slot, dbKeyType keyType);
+int findSlotByKeyIndex(redisDb *db, unsigned long target, dbKeyType keyType);
 
 /* Set data type */
 robj *setTypeCreate(sds value);
@@ -1748,11 +1787,12 @@ int selectDb(client *c, int id);
 void signalModifiedKey(redisDb *db, robj *key);
 void signalFlushedDb(int dbid);
 int verifyClusterConfigWithData(void);
-void scanGenericCommand(client *c, robj *o, unsigned long cursor);
-int parseScanCursorOrReply(client *c, robj *o, unsigned long *cursor);
+void scanGenericCommand(client *c, robj *o, unsigned long long cursor);
+int parseScanCursorOrReply(client *c, robj *o, unsigned long long *cursor);
 int dbAsyncDelete(redisDb *db, robj *key);
 void emptyDbAsync(redisDb *db);
 size_t lazyfreeGetPendingObjectsCount(void);
+void cumulativeKeyCountAdd(redisDb *db, int idx, long delta, dbKeyType keyType);
 
 /* API to get key arguments from commands */
 int *getKeysFromCommand(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);

@@ -49,6 +49,8 @@
 #endif
 #endif
 
+void dbGetStats(char *buf, size_t bufsize, redisDb *db, int full, dbKeyType keyType);
+
 /* ================================= Debugging ============================== */
 
 /* Compute the sha1 of string at 's' with 'len' bytes long.
@@ -115,7 +117,6 @@ void mixObjectDigest(unsigned char *digest, robj *o) {
 void computeDatasetDigest(unsigned char *final) {
     unsigned char digest[20];
     char buf[128];
-    dictIterator *di = NULL;
     dictEntry *de;
     int j;
     uint32_t aux;
@@ -124,17 +125,15 @@ void computeDatasetDigest(unsigned char *final) {
 
     for (j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
+        if (dbSize(db, DB_MAIN) == 0) continue;
+        dbIterator *dbit = dbIteratorInit(db, DB_MAIN);
 
-        if (dictSize(db->dict) == 0) continue;
-        di = dictGetSafeIterator(db->dict);
-
-        /* hash the DB id, so the same dataset moved in a different
-         * DB will lead to a different digest */
+        /* hash the DB id, so the same dataset moved in a different DB will lead to a different digest */
         aux = htonl(j);
         mixDigest(final,&aux,sizeof(aux));
 
         /* Iterate this DB writing every entry */
-        while((de = dictNext(di)) != NULL) {
+        while((de = dbIteratorNext(dbit)) != NULL) {
             sds key;
             robj *keyobj, *o;
             long long expiretime;
@@ -257,7 +256,7 @@ void computeDatasetDigest(unsigned char *final) {
             xorDigest(final,digest,20);
             decrRefCount(keyobj);
         }
-        dictReleaseIterator(di);
+        zfree(dbit);
     }
 }
 
@@ -365,7 +364,7 @@ void debugCommand(client *c) {
         robj *val;
         char *strenc;
 
-        if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
+        if ((de = dbFind(c->db, c->argv[2]->ptr, DB_MAIN)) == NULL) {
             addReply(c,shared.nokeyerr);
             return;
         }
@@ -417,7 +416,7 @@ void debugCommand(client *c) {
         robj *val;
         sds key;
 
-        if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
+        if ((de = dbFind(c->db, c->argv[2]->ptr, DB_MAIN)) == NULL) {
             addReply(c,shared.nokeyerr);
             return;
         }
@@ -457,7 +456,10 @@ void debugCommand(client *c) {
 
         if (getLongFromObjectOrReply(c, c->argv[2], &keys, NULL) != C_OK)
             return;
-        dictExpand(c->db->dict,keys);
+        if (dbExpand(c->db, keys, DB_MAIN, 1) == C_ERR) {
+            addReplyError(c, "OOM in dictTryExpand");
+            return;
+        }
         for (j = 0; j < keys; j++) {
             long valsize = 0;
             snprintf(buf,sizeof(buf),"%s:%lu",
@@ -530,10 +532,11 @@ void debugCommand(client *c) {
         sizes = sdscatprintf(sizes,"sdshdr32:%d ",(int)sizeof(struct sdshdr32));
         sizes = sdscatprintf(sizes,"sdshdr64:%d ",(int)sizeof(struct sdshdr64));
         addReplyBulkSds(c,sizes);
-    } else if (!strcasecmp(c->argv[1]->ptr,"htstats") && c->argc == 3) {
+    } else if (!strcasecmp(c->argv[1]->ptr,"htstats") && c->argc >= 3) {
         long dbid;
         sds stats = sdsempty();
         char buf[4096];
+        int full = 0;
 
         if (getLongFromObjectOrReply(c, c->argv[2], &dbid, NULL) != C_OK)
             return;
@@ -542,12 +545,15 @@ void debugCommand(client *c) {
             return;
         }
 
+        if (c->argc >= 4 && !strcasecmp(c->argv[3]->ptr,"full"))
+            full = 1;
+
         stats = sdscatprintf(stats,"[Dictionary HT]\n");
-        dictGetStats(buf,sizeof(buf),server.db[dbid].dict);
+        dbGetStats(buf, sizeof(buf), &server.db[dbid], full, DB_MAIN);
         stats = sdscat(stats,buf);
 
         stats = sdscatprintf(stats,"[Expires HT]\n");
-        dictGetStats(buf,sizeof(buf),server.db[dbid].expires);
+        dbGetStats(buf, sizeof(buf), &server.db[dbid], full, DB_EXPIRES);
         stats = sdscat(stats,buf);
 
         addReplyBulkSds(c,stats);
@@ -915,7 +921,7 @@ void logCurrentClient(void) {
         dictEntry *de;
 
         key = getDecodedObject(cc->argv[1]);
-        de = dictFind(cc->db->dict, key->ptr);
+        de = dbFind(cc->db, key->ptr, DB_MAIN);
         if (de) {
             val = dictGetVal(de);
             serverLog(LL_WARNING,"key '%s' found in DB containing the following object:", (char*)key->ptr);

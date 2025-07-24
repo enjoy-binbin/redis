@@ -880,6 +880,7 @@ int rdbSaveInfoAuxFields(rio *rdb, int flags, rdbSaveInfo *rsi) {
  * integer pointed by 'error' is set to the value of errno just after the I/O
  * error. */
 int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
+    dbIterator *dbit = NULL;
     dictIterator *di = NULL;
     dictEntry *de;
     char magic[10];
@@ -895,10 +896,8 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
 
     for (j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
-        dict *d = db->dict;
-        if (dictSize(d) == 0) continue;
-        di = dictGetSafeIterator(d);
-        if (!di) return C_ERR;
+        unsigned long long int db_size = dbSize(db, DB_MAIN);
+        if (db_size == 0) continue;
 
         /* Write the SELECT DB opcode */
         if (rdbSaveType(rdb,RDB_OPCODE_SELECTDB) == -1) goto werr;
@@ -908,19 +907,24 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
          * is currently the largest type we are able to represent in RDB sizes.
          * However this does not limit the actual size of the DB to load since
          * these sizes are just hints to resize the hash tables. */
-        uint32_t db_size, expires_size;
-        db_size = (dictSize(db->dict) <= UINT32_MAX) ?
-                                dictSize(db->dict) :
-                                UINT32_MAX;
-        expires_size = (dictSize(db->expires) <= UINT32_MAX) ?
-                                dictSize(db->expires) :
-                                UINT32_MAX;
+        unsigned long long expires_size = dbSize(db, DB_EXPIRES);
         if (rdbSaveType(rdb,RDB_OPCODE_RESIZEDB) == -1) goto werr;
         if (rdbSaveLen(rdb,db_size) == -1) goto werr;
         if (rdbSaveLen(rdb,expires_size) == -1) goto werr;
 
+        dbit = dbIteratorInit(db, DB_MAIN);
+        int last_slot = -1;
         /* Iterate this DB writing every entry */
-        while((de = dictNext(di)) != NULL) {
+        while ((de = dbIteratorNext(dbit)) != NULL) {
+            int curr_slot = dbIteratorGetCurrentSlot(dbit);
+            /* Save slot info. */
+//            if (server.cluster_enabled && curr_slot != last_slot) {
+//                if ((res = rdbSaveType(rdb, RDB_OPCODE_SLOT_INFO)) < 0) goto werr;
+//                if ((res = rdbSaveLen(rdb, curr_slot)) < 0) goto werr;
+//                if ((res = rdbSaveLen(rdb, dictSize(db->dict[curr_slot]))) < 0) goto werr;
+//                if ((res = rdbSaveLen(rdb, dictSize(db->expires[curr_slot]))) < 0) goto werr;
+//                last_slot = curr_slot;
+//            }
             sds keystr = dictGetKey(de);
             robj key, *o = dictGetVal(de);
             long long expire;
@@ -939,9 +943,8 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
                 aofReadDiffFromParent();
             }
         }
-        dictReleaseIterator(di);
+        zfree(dbit);
     }
-    di = NULL; /* So that we don't release it again on error. */
 
     /* If we are storing the replication information on disk, persist
      * the script cache as well: on successful PSYNC after a restart, we need
@@ -955,6 +958,7 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
                 goto werr;
         }
         dictReleaseIterator(di);
+        di = NULL;
     }
 
     /* EOF opcode */
@@ -970,6 +974,7 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
 werr:
     if (error) *error = errno;
     if (di) dictReleaseIterator(di);
+    if (dbit) zfree(dbit);
     return C_ERR;
 }
 
@@ -1531,32 +1536,50 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
         expiretime = -1;
 
         /* Read type. */
-        if ((type = rdbLoadType(rdb)) == -1) goto eoferr;
+        if ((type = rdbLoadType(rdb)) == -1) {
+            serverLog(LL_WARNING, "11111");
+            goto eoferr;
+        }
 
         /* Handle special types. */
         if (type == RDB_OPCODE_EXPIRETIME) {
             /* EXPIRETIME: load an expire associated with the next key
              * to load. Note that after loading an expire we need to
              * load the actual type, and continue. */
-            if ((expiretime = rdbLoadTime(rdb)) == -1) goto eoferr;
+            if ((expiretime = rdbLoadTime(rdb)) == -1) {
+                serverLog(LL_WARNING, "111112222");
+                goto eoferr;
+            }
             /* We read the time so we need to read the object type again. */
-            if ((type = rdbLoadType(rdb)) == -1) goto eoferr;
+            if ((type = rdbLoadType(rdb)) == -1) {
+                serverLog(LL_WARNING, "111133331");
+                goto eoferr;
+            }
             /* the EXPIRETIME opcode specifies time in seconds, so convert
              * into milliseconds. */
             expiretime *= 1000;
         } else if (type == RDB_OPCODE_EXPIRETIME_MS) {
             /* EXPIRETIME_MS: milliseconds precision expire times introduced
              * with RDB v3. Like EXPIRETIME but no with more precision. */
-            if ((expiretime = rdbLoadMillisecondTime(rdb)) == -1) goto eoferr;
+            if ((expiretime = rdbLoadMillisecondTime(rdb)) == -1) {
+                serverLog(LL_WARNING, "4444");
+                goto eoferr;
+            }
             /* We read the time so we need to read the object type again. */
-            if ((type = rdbLoadType(rdb)) == -1) goto eoferr;
+            if ((type = rdbLoadType(rdb)) == -1) {
+                serverLog(LL_WARNING, "5555");
+                goto eoferr;
+            }
         } else if (type == RDB_OPCODE_EOF) {
             /* EOF: End of file, exit the main loop. */
             break;
         } else if (type == RDB_OPCODE_SELECTDB) {
             /* SELECTDB: Select the specified database. */
             if ((dbid = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
+            {
+                serverLog(LL_WARNING, "666");
                 goto eoferr;
+            }
             if (dbid >= (unsigned)server.dbnum) {
                 serverLog(LL_WARNING,
                     "FATAL: Data file was created with a Redis "
@@ -1571,11 +1594,16 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
              * selected data base, in order to avoid useless rehashing. */
             uint64_t db_size, expires_size;
             if ((db_size = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
+            {
+                serverLog(LL_WARNING, "77777");
                 goto eoferr;
+            }
             if ((expires_size = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
+            {
+                serverLog(LL_WARNING, "8888");
                 goto eoferr;
-            dictExpand(db->dict,db_size);
-            dictExpand(db->expires,expires_size);
+            }
+            serverLog(LL_NOTICE, "Skip RDB_OPCODE_RESIZEDB for now");
             continue; /* Read type again. */
         } else if (type == RDB_OPCODE_AUX) {
             /* AUX: generic string-string fields. Use to add state to RDB
@@ -1584,8 +1612,14 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
              *
              * An AUX field is composed of two strings: key and value. */
             robj *auxkey, *auxval;
-            if ((auxkey = rdbLoadStringObject(rdb)) == NULL) goto eoferr;
-            if ((auxval = rdbLoadStringObject(rdb)) == NULL) goto eoferr;
+            if ((auxkey = rdbLoadStringObject(rdb)) == NULL) {
+                serverLog(LL_WARNING, "99999");
+                goto eoferr;
+            }
+            if ((auxval = rdbLoadStringObject(rdb)) == NULL) {
+                serverLog(LL_WARNING, "aaaa");
+                goto eoferr;
+            }
 
             if (((char*)auxkey->ptr)[0] == '%') {
                 /* All the fields with a name staring with '%' are considered
@@ -1623,9 +1657,15 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
         }
 
         /* Read key */
-        if ((key = rdbLoadStringObject(rdb)) == NULL) goto eoferr;
+        if ((key = rdbLoadStringObject(rdb)) == NULL) {
+            serverLog(LL_WARNING, "bbb");
+            goto eoferr;
+        }
         /* Read value */
-        if ((val = rdbLoadObject(type,rdb)) == NULL) goto eoferr;
+        if ((val = rdbLoadObject(type,rdb)) == NULL) {
+            serverLog(LL_WARNING, "dddd");
+            goto eoferr;
+        }
         /* Check if the key already expired. This function is used when loading
          * an RDB file from disk, either at startup, or when an RDB was
          * received from the master. In the latter case, the master is
@@ -1648,7 +1688,10 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
     if (rdbver >= 5) {
         uint64_t cksum, expected = rdb->cksum;
 
-        if (rioRead(rdb,&cksum,8) == 0) goto eoferr;
+        if (rioRead(rdb,&cksum,8) == 0) {
+            serverLog(LL_WARNING, "dddd");
+            goto eoferr;
+        }
         if (server.rdb_checksum) {
             memrev64ifbe(&cksum);
             if (cksum == 0) {
